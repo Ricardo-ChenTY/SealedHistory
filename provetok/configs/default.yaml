@@ -1,0 +1,37 @@
+project: provetok
+seed: 42
+
+sdg:
+  enable_l1: true
+  enable_l2: true
+  enable_l3: true
+  numeric_bins: 10
+
+audit:
+  run_term_recovery: true
+  run_phase_pred: true
+  run_next_milestone: true
+  run_order_bias: true
+  attacker_model: "dummy"   # "dummy" | "deepseek" | "openai" | "local"
+
+llm:
+  model: "deepseek-chat"
+  api_base: "https://api.deepseek.com/v1"
+  api_key: ""              # set via LLM_API_KEY env var
+  temperature: 0.7
+  max_tokens: 2048
+
+env:
+  budget: 30
+  fast_mode: true
+  multi_agent: false
+  n_agents: 1
+
+eval:
+  rubric_weights:
+    problem_shift: 1.0
+    mechanism_class: 1.0
+    dependency: 1.0
+    claim_validity: 2.0
+    ablation: 1.0
+    clarity: 0.5

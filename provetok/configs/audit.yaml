@@ -1,0 +1,17 @@
+# Audit-specific config
+project: provetok
+seed: 42
+
+audit:
+  run_term_recovery: true
+  run_phase_pred: true
+  run_next_milestone: true
+  run_order_bias: true
+  attacker_model: "deepseek"
+
+llm:
+  model: "deepseek-chat"
+  api_base: "https://api.deepseek.com/v1"
+  api_key: ""
+  temperature: 0.0
+  max_tokens: 1024

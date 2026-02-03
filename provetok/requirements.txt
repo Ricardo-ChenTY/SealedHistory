@@ -1,0 +1,10 @@
+# Core
+pyyaml>=6.0
+openai>=1.10.0
+
+# Visualization (optional)
+matplotlib>=3.7
+numpy>=1.24
+
+# Dev / testing
+pytest>=7.0

@@ -1,0 +1,9 @@
+# SDG-only config (for testing sealing independently)
+project: provetok
+seed: 42
+
+sdg:
+  enable_l1: true
+  enable_l2: true
+  enable_l3: true
+  numeric_bins: 10
