@@ -271,6 +271,10 @@ def main():
     p_all.add_argument("--config", default=None)
     p_all.add_argument("--agent", choices=["llm", "random"], default="llm")
 
+    # --- dataset ---
+    from provetok.dataset.cli import register_dataset_commands
+    register_dataset_commands(sub)
+
     args = parser.parse_args()
 
     if args.command == "seal":
@@ -281,6 +285,9 @@ def main():
         cmd_run(args)
     elif args.command == "all":
         cmd_all(args)
+    elif args.command == "dataset":
+        from provetok.dataset.cli import handle_dataset_command
+        handle_dataset_command(args)
 
 
 if __name__ == "__main__":

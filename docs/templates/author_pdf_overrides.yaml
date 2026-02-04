@@ -1,0 +1,13 @@
+# 作者公开 PDF 覆盖表（仅用于内部全文缓存，不对外发布）
+#
+# 作用：
+# - 当论文没有 arXiv id，但你知道作者公开 PDF 的直链时，把链接放到这里
+# - key 可以是 openalex_id / doi / paper_id（建议优先 openalex_id）
+#
+# 注意：
+# - 只填“明确公开、可直接访问”的 PDF URL
+# - 采集时会记录下载时间戳与 sha256
+
+"https://openalex.org/W0000000000": "https://example.com/paper.pdf"
+"10.1145/0000000.0000000": "https://example.com/another.pdf"
+

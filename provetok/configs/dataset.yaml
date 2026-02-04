@@ -1,0 +1,122 @@
+dataset_version: "0.2.0"
+
+# Where to write dataset exports (public + private).
+# The build command writes to: {export_root}/{dataset_version}/(public|private)
+export_root: "provetok/data/exports"
+
+tracks:
+  A:
+    name: "vision"
+    # Tiered release strategy:
+    # - core: small, strongly-audited subset used for main benchmark results
+    # - extended: large pool used for coverage/robustness/leakage audits
+    core_size: 120
+    extended_size: 2000
+    # OpenAlex filters are best-effort. For reproducibility, the pipeline always
+    # records the full query + raw snapshots under private/raw_snapshots/.
+    openalex:
+      # Concepts: use OpenAlex concept IDs (C...).
+      concepts:
+        - "https://openalex.org/C31972630"   # Computer vision
+        - "https://openalex.org/C108583219"  # Deep learning
+      # Keywords are joined into a single OpenAlex `search` string.
+      keywords:
+        - "vision transformer"
+        - "resnet"
+        - "convnet"
+        - "self-supervised"
+        - "object detection"
+        - "segmentation"
+        - "masked autoencoder"
+        - "contrastive learning"
+      venues: []
+      year_from: 2009
+      year_to: 2025
+  B:
+    name: "sequence_modeling"
+    core_size: 120
+    extended_size: 2000
+    openalex:
+      concepts:
+        - "https://openalex.org/C204321447"  # Natural language processing
+        - "https://openalex.org/C137293760"  # Language model
+        - "https://openalex.org/C147168706"  # Recurrent neural network
+        - "https://openalex.org/C66322947"   # Transformer
+        - "https://openalex.org/C203005215"  # Machine translation
+      keywords:
+        - "language model"
+        - "transformer"
+        - "attention"
+        - "seq2seq"
+        - "rnn"
+        - "lstm"
+        - "bert"
+        - "gpt"
+        - "machine translation"
+        - "text generation"
+      venues: []
+      year_from: 2009
+      year_to: 2025
+
+sources:
+  openalex:
+    base_url: "https://api.openalex.org"
+    mailto: ""
+    per_page: 200
+    max_pages: 50
+    rate_limit_qps: 3
+  s2:
+    base_url: "https://api.semanticscholar.org/graph/v1"
+    api_key_env: "S2_API_KEY"
+    rate_limit_qps: 1
+  opencitations:
+    base_url: "https://api.opencitations.net/index/v1"
+    rate_limit_qps: 2
+  arxiv:
+    oai_base_url: "https://export.arxiv.org/oai2"
+    use_oai_pmh: true
+    use_api_fallback: true
+    rate_limit_qps: 1
+
+selection:
+  topic_coverage_k: 16
+  centrality_weights:
+    pagerank: 1.0
+    indegree: 0.5
+  # Optional JSONL/YAML file describing manual include/exclude decisions.
+  manual_decisions_file: ""
+
+fulltext:
+  # Tier policies (preferred). Each is one of: "none" | "arxiv_only" | "arxiv_and_author_pdf"
+  core:
+    policy: "arxiv_and_author_pdf"
+  extended:
+    policy: "arxiv_and_author_pdf"
+  # Legacy fallback (kept for backwards compatibility)
+  policy: "arxiv_and_author_pdf"
+  # Optional YAML mapping paper keys -> author PDF URLs.
+  author_pdf_overrides_file: ""
+  max_pdf_mb: 50
+  timeout_sec: 60
+
+record_build:
+  # one of: "llm" | "legacy_milestones"
+  mode: "llm"
+  llm_model: "deepseek-chat"
+  llm_api_base: "https://api.deepseek.com/v1"
+  llm_api_key_env: "LLM_API_KEY"
+  prompt_version: "v1"
+
+sdg:
+  enable_l1: true
+  enable_l2: true
+  enable_l3: true
+
+qa:
+  edge_coverage_threshold: 0.2
+  schema_pass_rate_required: 1.0
+  consistency_pass_rate_required: 0.95
+
+seeds:
+  public_seeds: [42, 43, 44]
+  private_seeds: []

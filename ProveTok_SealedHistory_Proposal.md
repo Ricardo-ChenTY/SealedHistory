@@ -100,7 +100,7 @@
 
 ## 6. 评测环境（Benchmark Environment）
 ### 6.1 微历史（micro-history）范围（可控但做深）
-建议先做两条track，每条25–40篇“里程碑记录”：
+建议先做两条 track，采用**分层发布**：每条 track 产出 **Core（120 篇，强自动审计、用于主实验）+ Extended（2000+ 篇，覆盖/鲁棒性/泄漏审计）**：
 - Track A：视觉表征演化（vision representation evolution）
 - Track B：序列建模演化（sequence modeling evolution）
 

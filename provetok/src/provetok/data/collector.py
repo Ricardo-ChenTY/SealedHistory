@@ -102,18 +102,29 @@ def _http_get(url: str, api_key: Optional[str] = None) -> Optional[dict]:
 
 
 def _parse_s2_paper(d: dict) -> S2Paper:
-    authors = [a.get("name", "") for a in d.get("authors", [])]
-    ref_ids = [r.get("paperId", "") for r in d.get("references", []) if r.get("paperId")]
+    authors_raw = d.get("authors") or []
+    if not isinstance(authors_raw, list):
+        authors_raw = []
+    authors = [a.get("name", "") for a in authors_raw if isinstance(a, dict)]
+
+    refs_raw = d.get("references") or []
+    if not isinstance(refs_raw, list):
+        refs_raw = []
+    ref_ids = [r.get("paperId", "") for r in refs_raw if isinstance(r, dict) and r.get("paperId")]
+
+    fos_raw = d.get("fieldsOfStudy") or []
+    if not isinstance(fos_raw, list):
+        fos_raw = []
     return S2Paper(
         paper_id=d.get("paperId", ""),
         title=d.get("title", ""),
         abstract=d.get("abstract", "") or "",
         year=d.get("year"),
-        venue=d.get("venue", ""),
+        venue=d.get("venue") or "",
         authors=authors,
-        citation_count=d.get("citationCount", 0),
+        citation_count=int(d.get("citationCount", 0) or 0),
         reference_ids=ref_ids,
-        fields_of_study=d.get("fieldsOfStudy") or [],
+        fields_of_study=fos_raw,
         raw=d,
     )
 

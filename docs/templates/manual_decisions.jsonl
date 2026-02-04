@@ -1,0 +1,3 @@
+{"paper_key":"https://openalex.org/W0000000000","action":"exclude","reason_tag":"not_fulltext_available","reviewer_id":"r1","evidence":"No arXiv id and no author public PDF URL found at review time."}
+{"paper_key":"https://openalex.org/W0000000001","action":"include","reason_tag":"canonical_milestone","reviewer_id":"r1","evidence":"Included to satisfy topic coverage; strong citation centrality; has arXiv PDF."}
+
