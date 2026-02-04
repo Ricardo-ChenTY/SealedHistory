@@ -47,3 +47,19 @@
   - Result: PASS
   - Notes: Name/identity fingerprint policy optional flag + allowlist tests.
   - Artifacts: N/A
+
+## Missing-019
+- 2026-02-05: `./.venv/bin/python -m pytest -q`
+  - Result: PASS
+  - Notes: Includes `provetok run` random-agent smoke test and verifies env package is importable.
+  - Artifacts: N/A
+- 2026-02-05: `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_a.sealed.jsonl --raw provetok/data/raw/micro_history_a.jsonl --output /tmp/eval_report_a.json`
+  - Result: PASS
+  - Notes: CLI benchmark simulation produces a valid eval report.
+  - Artifacts: `/tmp/eval_report_a.json`
+
+## Missing-020
+- 2026-02-05: `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json`
+  - Result: PASS
+  - Notes: Track B sealed sample runs end-to-end.
+  - Artifacts: `/tmp/eval_report_b.json`

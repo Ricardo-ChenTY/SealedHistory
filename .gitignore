@@ -21,3 +21,9 @@ output/
 
 # Dataset exports / caches (generated)
 provetok/data/exports/
+
+# Allow the Python package module named `env` (not a virtualenv).
+!provetok/src/provetok/env/
+!provetok/src/provetok/env/**
+# Re-apply ignores within the un-ignored package dir.
+provetok/src/provetok/env/__pycache__/

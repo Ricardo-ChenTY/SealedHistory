@@ -152,6 +152,31 @@
   - Evidence: Build now records `targets`, `actuals`, and `selection_exclusions` (overall + per-track) in the manifest.
   - Notes:
 
+- [x] Missing-019: Make benchmark `provetok run` importable + runnable from a fresh git checkout
+  - Location: `.gitignore`, `provetok/src/provetok/env/`, `provetok/src/provetok/cli.py`, `provetok/src/provetok/agents/base.py`
+  - Acceptance:
+    - `git ls-files provetok/src/provetok/env/environment.py` prints the file path (env package is tracked in git, i.e., not lost due to ignore rules).
+    - `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_a.sealed.jsonl --raw provetok/data/raw/micro_history_a.jsonl --output /tmp/eval_report.json` completes and writes a report with top-level keys `rubric`, `audit`, `pareto`.
+  - Evidence: `.gitignore` currently ignores any `env/` directory, so `provetok/src/provetok/env` is missing from git tracking; `provetok.cli run` imports it.
+  - Implementation:
+    - Updated `.gitignore` to unignore `provetok/src/provetok/env/**` so the benchmark environment package is tracked.
+    - Added a CLI smoke test `provetok/tests/test_benchmark_smoke.py` to run `provetok run` with the random baseline and validate the JSON report schema.
+  - Next: `./.venv/bin/python -m pytest -q`
+  - Verified: 2026-02-05 via `./.venv/bin/python -m pytest -q`
+  - Notes:
+
+- [x] Missing-020: Provide a sealed sample for Track B and ensure `provetok run` works on it
+  - Location: `provetok/data/raw/micro_history_b.jsonl`, `provetok/data/sealed/`
+  - Acceptance:
+    - `provetok/data/sealed/micro_history_b.sealed.jsonl` (and its `.codebook.json`) exist in the repo.
+    - `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json` completes successfully.
+  - Evidence: Raw Track B sample exists, but the sealed counterpart is missing, blocking out-of-the-box Track B benchmark smoke runs.
+  - Implementation:
+    - Generated `provetok/data/sealed/micro_history_b.sealed.jsonl` and `provetok/data/sealed/micro_history_b.sealed.codebook.json` via `provetok cli seal` (seed=42).
+  - Next: `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json`
+  - Verified: 2026-02-05 via `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json`
+  - Notes:
+
 ## Ambiguous
 - [x] Amb-001: Define "public fulltext accessible" verification precisely
   - Location: `plan.md` Phase 4; implementation in `provetok/src/provetok/dataset/fulltext.py`
@@ -193,3 +218,4 @@
 - 2026-02-04: Completed Missing-002..009, Missing-015, Missing-018; resolved Amb-001/Amb-003 by implementing strict fulltext + edge agreement.
 - 2026-02-04: Refreshed `docs/repo_inventory.md`; reviewed Mohu against `plan.md` (no new IDs added).
 - 2026-02-04: Closed all remaining Missing/Ambiguous items; verification PASS recorded in `docs/verify_log.md`.
+- 2026-02-05: Closed benchmark run gaps: tracked `provetok.env`, added `provetok run` smoke test, and provided sealed Track B sample.
