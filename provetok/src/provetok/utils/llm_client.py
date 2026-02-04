@@ -139,6 +139,15 @@ class LLMClient:
             extra["response_format"] = response_format
         return self.chat(messages, **extra, **kwargs)
 
+    def is_configured(self) -> bool:
+        """Return True if a real client + API key are available.
+
+        This is stricter than "API key is set": it also checks that the OpenAI
+        client dependency is importable.
+        """
+        self._ensure_client()
+        return self._client is not None and bool(self.config.api_key)
+
 
 # ---------------------------------------------------------------------------
 # Factory

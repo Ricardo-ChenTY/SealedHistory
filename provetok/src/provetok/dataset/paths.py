@@ -49,3 +49,7 @@ class DatasetPaths:
 
     def private_mapping_path(self, track_id: str, tier: str) -> Path:
         return self.private_dir / "mapping_key" / f"paper_id_map_track_{track_id}_{tier}.jsonl"
+
+    def private_track_papers_path(self, track_id: str) -> Path:
+        """Private per-track paper list (pre-record generation)."""
+        return self.private_dir / f"track_{track_id}_papers.jsonl"

@@ -61,7 +61,9 @@ def write_fulltext_index_for_mapping_rows(
             author_url = row.get("author_pdf_url") or None
             sources = list(row.get("source_paths") or [])
             pdf_sha256 = row.get("pdf_sha256") or None
-            status = "ok_cached" if (sources or pdf_sha256) else "missing"
+            status = str(row.get("fulltext_status") or "")
+            if not status:
+                status = "ok_cached" if (sources or pdf_sha256) else "missing"
             f.write(
                 json.dumps(
                     {
@@ -74,6 +76,8 @@ def write_fulltext_index_for_mapping_rows(
                         "pdf_sha256": pdf_sha256,
                         "source_paths": sources,
                         "retrieved_at_unix": row.get("retrieved_at_unix"),
+                        "fulltext_source": row.get("fulltext_source"),
+                        "fulltext_policy": row.get("fulltext_policy"),
                     },
                     ensure_ascii=False,
                 )
@@ -107,6 +111,11 @@ def cache_fulltext_for_mapping_rows(
     mapping_rows: List[Dict[str, Any]],
     offline: bool,
     tier: str = "extended",
+    write_index: bool = True,
+    arxiv_client: Optional[ArxivClient] = None,
+    pdf_fetcher: Optional[AuthorPdfFetcher] = None,
+    overrides: Optional[Dict[str, str]] = None,
+    ts_unix: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Download/cache fulltext based on mapping rows.
 
@@ -122,41 +131,48 @@ def cache_fulltext_for_mapping_rows(
     policy = str(tier_cfg.get("policy") or ft_cfg.get("policy", "none"))
     if policy == "none":
         logger.info("Fulltext policy=none; skipping downloads")
-        return mapping_rows
+        return [
+            {**dict(r), "fulltext_status": "skipped_none", "fulltext_source": None, "fulltext_policy": policy}
+            for r in mapping_rows
+        ]
 
     if offline:
         logger.info("Offline mode enabled; skipping fulltext downloads")
-        return mapping_rows
+        return [
+            {**dict(r), "fulltext_status": "skipped_offline", "fulltext_source": None, "fulltext_policy": policy}
+            for r in mapping_rows
+        ]
 
-    overrides_path = ft_cfg.get("author_pdf_overrides_file") or ""
-    overrides = load_author_pdf_overrides(Path(overrides_path)) if overrides_path else {}
+    if overrides is None:
+        overrides_path = ft_cfg.get("author_pdf_overrides_file") or ""
+        overrides = load_author_pdf_overrides(Path(overrides_path)) if overrides_path else {}
 
-    arxiv_cfg_raw = (cfg.get("sources") or {}).get("arxiv") or {}
-    arxiv_client = ArxivClient(
-        ArxivConfig(
-            oai_base_url=str(arxiv_cfg_raw.get("oai_base_url", "https://export.arxiv.org/oai2")),
-            use_oai_pmh=bool(arxiv_cfg_raw.get("use_oai_pmh", True)),
-            use_api_fallback=bool(arxiv_cfg_raw.get("use_api_fallback", True)),
-            rate_limit_qps=float(arxiv_cfg_raw.get("rate_limit_qps", 1.0)),
-            timeout_sec=int(ft_cfg.get("timeout_sec", 60)),
+    if arxiv_client is None:
+        arxiv_cfg_raw = (cfg.get("sources") or {}).get("arxiv") or {}
+        arxiv_client = ArxivClient(
+            ArxivConfig(
+                oai_base_url=str(arxiv_cfg_raw.get("oai_base_url", "https://export.arxiv.org/oai2")),
+                use_oai_pmh=bool(arxiv_cfg_raw.get("use_oai_pmh", True)),
+                use_api_fallback=bool(arxiv_cfg_raw.get("use_api_fallback", True)),
+                rate_limit_qps=float(arxiv_cfg_raw.get("rate_limit_qps", 1.0)),
+                timeout_sec=int(ft_cfg.get("timeout_sec", 60)),
+            )
         )
-    )
 
-    pdf_fetcher = AuthorPdfFetcher(
-        AuthorPdfConfig(
-            rate_limit_qps=float((cfg.get("sources") or {}).get("s2", {}).get("rate_limit_qps", 1.0)),
-            timeout_sec=int(ft_cfg.get("timeout_sec", 60)),
-            max_pdf_mb=int(ft_cfg.get("max_pdf_mb", 50)),
+    if pdf_fetcher is None:
+        pdf_fetcher = AuthorPdfFetcher(
+            AuthorPdfConfig(
+                rate_limit_qps=float((cfg.get("sources") or {}).get("s2", {}).get("rate_limit_qps", 1.0)),
+                timeout_sec=int(ft_cfg.get("timeout_sec", 60)),
+                max_pdf_mb=int(ft_cfg.get("max_pdf_mb", 50)),
+            )
         )
-    )
 
     arxiv_root = paths.private_dir / "fulltext_cache" / "arxiv"
     pdf_root = paths.private_dir / "fulltext_cache" / "pdfs"
     index_path = paths.private_fulltext_index_path(tier)
 
-    # Append-only: start new file per build by removing old one would be nicer,
-    # but avoid destructive operations; include build timestamp in each row.
-    build_ts = int(time.time())
+    build_ts = int(ts_unix or time.time())
 
     updated = []
     for row in mapping_rows:
@@ -174,39 +190,77 @@ def cache_fulltext_for_mapping_rows(
         sources: List[str] = []
         pdf_sha256: Optional[str] = None
         status = "skipped"
+        ft_source: Optional[str] = None
+        ft_error: Optional[str] = None
 
         try:
             if arxiv_id and policy in ("arxiv_only", "arxiv_and_author_pdf"):
                 out_dir = arxiv_root / arxiv_id.replace("/", "_")
                 pdf_path = arxiv_client.download_pdf(arxiv_id, out_dir)
-                src_path = arxiv_client.download_source(arxiv_id, out_dir)
-                sources.extend([str(pdf_path), str(src_path)])
+                sources.append(str(pdf_path))
                 pdf_sha256 = _sha256_file(pdf_path)
-                status = "ok_arxiv"
+                ft_source = "arxiv"
+                status = "ok_arxiv_pdf"
+
+                # Best-effort: also fetch arXiv source for formula parsing.
+                try:
+                    src_path = arxiv_client.download_source(arxiv_id, out_dir)
+                    sources.append(str(src_path))
+                    status = "ok_arxiv_pdf_source"
+                except Exception as e:
+                    logger.warning("arXiv source download failed for %s: %s", paper_id, e)
             elif author_url and policy == "arxiv_and_author_pdf":
                 pdf_path, pdf_sha256 = pdf_fetcher.download(author_url, pdf_root)
                 sources.append(str(pdf_path))
+                ft_source = "author_pdf"
                 status = "ok_author_pdf"
             else:
                 status = "missing"
         except Exception as e:
             status = f"error:{type(e).__name__}"
-            _append_jsonl(
-                index_path,
-                {
-                    "ts_unix": build_ts,
-                    "tier": tier,
-                    "paper_id": paper_id,
-                    "status": status,
-                    "error": str(e),
-                    "arxiv_id": arxiv_id,
-                    "author_pdf_url": author_url,
-                },
-            )
-            updated.append(row)
+            ft_error = str(e)
+
+            # Fallback: if arXiv failed and policy allows, try author PDF.
+            if arxiv_id and author_url and policy == "arxiv_and_author_pdf":
+                try:
+                    pdf_path, pdf_sha256 = pdf_fetcher.download(author_url, pdf_root)
+                    sources.append(str(pdf_path))
+                    ft_source = "author_pdf"
+                    status = "ok_author_pdf"
+                    ft_error = None
+                except Exception as e2:
+                    status = f"error:{type(e2).__name__}"
+                    ft_error = str(e2)
+
+            if write_index:
+                _append_jsonl(
+                    index_path,
+                    {
+                        "ts_unix": build_ts,
+                        "tier": tier,
+                        "paper_id": paper_id,
+                        "status": status,
+                        "error": ft_error,
+                        "arxiv_id": arxiv_id,
+                        "author_pdf_url": author_url,
+                        "fulltext_source": ft_source,
+                        "fulltext_policy": policy,
+                    },
+                )
+
+            new_row = dict(row)
+            new_row["fulltext_status"] = status
+            new_row["fulltext_source"] = ft_source
+            new_row["fulltext_policy"] = policy
+            if ft_error:
+                new_row["fulltext_error"] = ft_error
+            updated.append(new_row)
             continue
 
         new_row = dict(row)
+        new_row["fulltext_status"] = status
+        new_row["fulltext_source"] = ft_source
+        new_row["fulltext_policy"] = policy
         if sources:
             new_row.setdefault("source_paths", [])
             new_row["source_paths"] = list(new_row["source_paths"]) + sources
@@ -214,19 +268,22 @@ def cache_fulltext_for_mapping_rows(
             new_row["pdf_sha256"] = pdf_sha256
         new_row["retrieved_at_unix"] = build_ts
 
-        _append_jsonl(
-            index_path,
-            {
-                "ts_unix": build_ts,
-                "tier": tier,
-                "paper_id": paper_id,
-                "status": status,
-                "arxiv_id": arxiv_id,
-                "author_pdf_url": author_url,
-                "pdf_sha256": pdf_sha256,
-                "source_paths": sources,
-            },
-        )
+        if write_index:
+            _append_jsonl(
+                index_path,
+                {
+                    "ts_unix": build_ts,
+                    "tier": tier,
+                    "paper_id": paper_id,
+                    "status": status,
+                    "arxiv_id": arxiv_id,
+                    "author_pdf_url": author_url,
+                    "pdf_sha256": pdf_sha256,
+                    "source_paths": sources,
+                    "fulltext_source": ft_source,
+                    "fulltext_policy": policy,
+                },
+            )
         updated.append(new_row)
 
     return updated

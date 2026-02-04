@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from provetok.data.schema_v2 import FormulaGraph, PaperRecordInternalV2, PaperRecordV2, Protocol, Results
 from provetok.utils.llm_client import LLMClient
@@ -51,7 +51,14 @@ _FORBIDDEN_PUBLIC_TEXT_PATTERNS: List[tuple[str, str]] = [
     ("arxiv_word", r"\barxiv\b"),
     ("arxiv_id", r"\b\d{4}\.\d{4,5}(v\d+)?\b"),
     ("year", r"\b(19|20)\d{2}\b"),
+    ("venue", r"\b(NeurIPS|ICML|ICLR|CVPR|ICCV|ECCV|ACL|EMNLP|NAACL|COLING)\b"),
 ]
+
+
+class RecordBuildError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _redact_public_text(text: str, *, max_chars: int = 2000) -> str:
@@ -64,6 +71,11 @@ def _redact_public_text(text: str, *, max_chars: int = 2000) -> str:
     for _, pat in _FORBIDDEN_PUBLIC_TEXT_PATTERNS:
         out = re.sub(pat, " ", out, flags=re.IGNORECASE)
     out = " ".join(out.split())
+    return out[:max_chars]
+
+
+def _normalize_public_text(text: str, *, max_chars: int = 2000) -> str:
+    out = " ".join(str(text or "").split())
     return out[:max_chars]
 
 
@@ -108,6 +120,66 @@ def _heuristic_keywords(title: str, abstract: str, max_k: int = 10) -> List[str]
     return kws[:max_k]
 
 
+def _forbidden_public_text_codes(text: str) -> List[str]:
+    hits: List[str] = []
+    for code, pat in _FORBIDDEN_PUBLIC_TEXT_PATTERNS:
+        if re.search(pat, text, flags=re.IGNORECASE):
+            hits.append(code)
+    return hits
+
+
+def _tokenize(text: str) -> List[str]:
+    return [t for t in re.split(r"[^A-Za-z0-9]+", str(text or "").lower()) if t]
+
+
+def _ngram_overlap_ratio(a: Sequence[str], b: Sequence[str], *, n: int) -> float:
+    if n <= 0:
+        return 0.0
+    if len(a) < n or len(b) < n:
+        return 0.0
+    ng_a = {tuple(a[i : i + n]) for i in range(len(a) - n + 1)}
+    ng_b = {tuple(b[i : i + n]) for i in range(len(b) - n + 1)}
+    if not ng_a:
+        return 0.0
+    return len(ng_a & ng_b) / len(ng_a)
+
+
+def _contains_verbatim_span(a: Sequence[str], b_text: str, *, span_words: int) -> bool:
+    if span_words <= 0 or len(a) < span_words:
+        return False
+    hay = " ".join(str(b_text or "").lower().split())
+    # Background is short; O(n) substring checks are OK.
+    for i in range(len(a) - span_words + 1):
+        needle = " ".join(a[i : i + span_words])
+        if needle and needle in hay:
+            return True
+    return False
+
+
+def _validate_strict_background(background: str, abstract: str) -> List[str]:
+    issues: List[str] = []
+
+    bg = _normalize_public_text(background, max_chars=2000)
+    if len(bg.strip()) < 40:
+        issues.append("background_too_short")
+
+    forbidden = _forbidden_public_text_codes(bg)
+    for code in forbidden:
+        issues.append(f"forbidden_{code}")
+
+    # Heuristic paraphrase enforcement: avoid long verbatim spans and high n-gram overlap.
+    bg_toks = _tokenize(bg)
+    abs_toks = _tokenize(abstract)
+    if _contains_verbatim_span(bg_toks, abstract, span_words=12):
+        issues.append("verbatim_span_12w")
+
+    overlap = _ngram_overlap_ratio(bg_toks, abs_toks, n=6)
+    if overlap >= 0.45:
+        issues.append(f"ngram_overlap_{overlap:.2f}")
+
+    return issues
+
+
 def build_record_v2_from_abstract(
     *,
     paper_id: str,
@@ -117,6 +189,9 @@ def build_record_v2_from_abstract(
     dependencies: List[str],
     llm: Optional[LLMClient],
     ids: Optional[Dict[str, Optional[str]]] = None,
+    strict_paraphrase: bool = False,
+    max_retries: int = 0,
+    prompt_version: Optional[str] = None,
 ) -> PaperRecordInternalV2:
     """Build an internal v2 record (public + mapping metadata)."""
     ids = ids or {}
@@ -124,21 +199,80 @@ def build_record_v2_from_abstract(
     extracted: Dict[str, Any] = {}
     llm_parse_ok = False
 
-    if llm is not None:
+    if strict_paraphrase and llm is None:
+        raise RecordBuildError(
+            "llm_required",
+            "strict_paraphrase=true requires a real LLM client (llm is None)",
+        )
+
+    attempts = 1 if not strict_paraphrase else max(1, int(max_retries) + 1)
+    last_llm_error: Optional[str] = None
+    last_policy_issues: List[str] = []
+
+    for attempt in range(attempts):
+        extracted = {}
+        llm_parse_ok = False
+        last_llm_error = None
+        last_policy_issues = []
+
+        if llm is None:
+            break
+
         resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=1200)
         try:
             extracted = json.loads(resp.content.strip())
             llm_parse_ok = isinstance(extracted, dict)
-        except Exception:
-            logger.warning("LLM extraction failed for %s; falling back to placeholders", paper_id)
+        except Exception as e:
+            last_llm_error = f"json_parse:{type(e).__name__}"
+            logger.warning(
+                "LLM extraction failed for %s (attempt %d/%d)",
+                paper_id,
+                attempt + 1,
+                attempts,
+            )
+            continue
+
+        if not llm_parse_ok:
+            last_llm_error = "bad_json_root"
+            continue
+
+        if not strict_paraphrase:
+            break
+
+        background_candidate = str(extracted.get("background") or "").strip()
+        if not background_candidate:
+            last_policy_issues = ["background_missing"]
+            continue
+
+        policy_issues = _validate_strict_background(background_candidate, abstract=abstract)
+        if policy_issues:
+            last_policy_issues = policy_issues
+            continue
+
+        # Strict policy satisfied.
+        break
 
     background_raw = str(extracted.get("background") or "").strip()
-    if not background_raw:
-        # Best-effort: take a short prefix from the abstract as a fallback.
-        background_raw = str(abstract or "").strip()[:600]
-    background = _redact_public_text(background_raw, max_chars=2000)
-    if not background:
-        background = "This work proposes a method and evaluates it on standard benchmarks."
+    if strict_paraphrase:
+        if not background_raw:
+            raise RecordBuildError(
+                "background_missing",
+                f"strict_paraphrase=true but background is empty (last_llm_error={last_llm_error}, policy_issues={last_policy_issues})",
+            )
+        policy_issues = _validate_strict_background(background_raw, abstract=abstract)
+        if policy_issues:
+            raise RecordBuildError(
+                "background_policy_fail",
+                f"strict_paraphrase=true but background failed policy: {policy_issues}",
+            )
+        background = _normalize_public_text(background_raw, max_chars=2000)
+    else:
+        if not background_raw:
+            # Best-effort: take a short prefix from the abstract as a fallback.
+            background_raw = str(abstract or "").strip()[:600]
+        background = _redact_public_text(background_raw, max_chars=2000)
+        if not background:
+            background = "This work proposes a method and evaluates it on standard benchmarks."
     mech_tags = extracted.get("mechanism_tags") or ["other"]
     if not isinstance(mech_tags, list):
         mech_tags = ["other"]
@@ -180,7 +314,12 @@ def build_record_v2_from_abstract(
         ),
         provenance={
             "abstract_sha256": _sha256_text(abstract or ""),
-            "builder": "llm_v1" if llm_parse_ok else ("heuristic_v0" if llm is None else "llm_failed_fallback_v0"),
+            "builder": (
+                "llm_v1_strict"
+                if strict_paraphrase
+                else ("llm_v1" if llm_parse_ok else ("heuristic_v0" if llm is None else "llm_failed_fallback_v0"))
+            ),
+            **({"prompt_version": str(prompt_version)} if prompt_version else {}),
         },
         qa={
             "llm_parse_ok": bool(llm_parse_ok),

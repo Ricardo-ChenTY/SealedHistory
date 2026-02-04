@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+import copy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -17,7 +18,7 @@ from provetok.data.schema_v2 import PaperRecordInternalV2, save_records_internal
 from provetok.dataset.fulltext import cache_fulltext_for_mapping_rows, write_fulltext_index_for_mapping_rows
 from provetok.dataset.legacy import default_taxonomy
 from provetok.dataset.paths import DatasetPaths
-from provetok.dataset.record_builder import build_record_v2_from_abstract
+from provetok.dataset.record_builder import RecordBuildError, build_record_v2_from_abstract
 from provetok.dataset.selection import (
     assign_local_ids,
     derive_dependency_closed_core_paper_ids,
@@ -27,6 +28,7 @@ from provetok.dataset.selection import (
 )
 from provetok.sources.http import SnapshotWriter
 from provetok.sources.openalex_client import OpenAlexClient, OpenAlexConfig
+from provetok.sources.opencitations_client import OpenCitationsClient, OpenCitationsConfig
 from provetok.sources.s2_client import S2Client, S2Config
 from provetok.utils.llm_client import LLMClient, LLMConfig
 
@@ -173,7 +175,76 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
 
         return max(0.0, min(1.0, float(score)))
 
-    extended_rows_all: List[Dict[str, Any]] = []
+    def _normalize_doi(doi: Optional[str]) -> str:
+        s = str(doi or "").strip()
+        if not s:
+            return ""
+        low = s.lower()
+        for prefix in ("https://doi.org/", "http://doi.org/"):
+            if low.startswith(prefix):
+                s = s[len(prefix) :]
+                break
+        if s.lower().startswith("doi:"):
+            s = s[4:]
+        return s.strip().lower()
+
+    # ------------------------------------------------------------------
+    # Strict record build configuration (LLM + paraphrase policy)
+    rb = raw_cfg.get("record_build") or {}
+    llm_mode = str(rb.get("mode", "llm"))
+    require_llm = bool(rb.get("require_llm", False))
+    strict_paraphrase = bool(rb.get("strict_paraphrase", False))
+    max_retries = int(rb.get("max_retries", 0) or 0)
+    prompt_version = str(rb.get("prompt_version") or "")
+
+    if strict_paraphrase and not require_llm:
+        raise ValueError("record_build.strict_paraphrase=true requires record_build.require_llm=true")
+
+    llm: Optional[LLMClient] = None
+    if llm_mode == "llm":
+        api_key_env = str(rb.get("llm_api_key_env", "LLM_API_KEY"))
+        api_key = os.environ.get(api_key_env, "")
+        if not api_key:
+            if require_llm:
+                raise RuntimeError(
+                    f"record_build.require_llm=true but {api_key_env} is empty; set the env var to enable LLM record builds"
+                )
+            logger.info("LLM disabled: %s is empty; using deterministic fallbacks", api_key_env)
+        else:
+            candidate = LLMClient(
+                LLMConfig(
+                    model=str(rb.get("llm_model", "deepseek-chat")),
+                    api_base=str(rb.get("llm_api_base", "https://api.deepseek.com/v1")),
+                    api_key=api_key,
+                    temperature=0.0,
+                )
+            )
+            if not candidate.is_configured():
+                if require_llm:
+                    raise RuntimeError(
+                        "record_build.require_llm=true but LLM client is not configured; ensure `openai` is installed and the API key is valid"
+                    )
+                logger.warning("LLM client not configured; falling back to deterministic placeholders")
+            else:
+                llm = candidate
+    elif require_llm or strict_paraphrase:
+        raise ValueError("record_build.require_llm/strict_paraphrase require record_build.mode=llm")
+
+    # Fulltext selection strictness (plan.md hard constraint when enabled).
+    ft_cfg = raw_cfg.get("fulltext") or {}
+    ext_ft_cfg = ft_cfg.get("extended") or {}
+    if not isinstance(ext_ft_cfg, dict):
+        ext_ft_cfg = {}
+    require_fulltext_success = bool(ext_ft_cfg.get("require_success", ft_cfg.get("require_success", False)))
+
+    # Backfill knobs: how many candidates to consider and batch fulltext downloads.
+    pool_mult = float(sel_cfg.get("backfill_pool_multiplier", 5.0))
+    batch_size = int(sel_cfg.get("backfill_batch_size", 8) or 8)
+    if batch_size <= 0:
+        batch_size = 8
+
+    extended_selected_all: List[Dict[str, Any]] = []
+    core_selected_all: List[Dict[str, Any]] = []
 
     for t in targets:
         cfg_t = track_cfg.get(t) or {}
@@ -210,35 +281,133 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             logger.info("Fetched %d OpenAlex works for track %s", len(works), t)
 
         candidates = [parse_openalex_work(w) for w in works if w.get("id")]
+        if not candidates:
+            logger.warning("No OpenAlex candidates for track %s", t)
+            continue
 
-        # Select the extended pool first, then derive a smaller dependency-closed core.
-        selected_ext = select_works(
+        pool_size = max(extended_size, int(round(extended_size * pool_mult)))
+        pool_size = max(1, min(pool_size, len(candidates)))
+
+        selected_pool = select_works(
             candidates,
-            target_min=extended_size,
-            target_max=extended_size,
+            target_min=pool_size,
+            target_max=pool_size,
             topic_coverage_k=topic_k,
             centrality_weights=centrality_weights,
             manual_decisions=manual_decisions,
         )
-        oa_to_pid = assign_local_ids(selected_ext, track_prefix=t)
+        oa_to_pid = assign_local_ids(selected_pool, track_prefix=t)
 
         # Prepare S2 client for metadata enrichment (DOI/arXiv/openAccessPdf).
         s2_snap = SnapshotWriter(paths.private_dir / "raw_snapshots" / "s2" / f"requests_track_{t}.jsonl", "s2")
         s2 = S2Client(s2_cfg, snapshot=s2_snap)
 
-        for c in selected_ext:
+        accepted_ext_rows: List[Dict[str, Any]] = []
+        accepted_ext_records: Dict[str, PaperRecordInternalV2] = {}
+
+        def process_batch(rows: List[Dict[str, Any]]) -> None:
+            nonlocal accepted_ext_rows, accepted_ext_records
+            updated = cache_fulltext_for_mapping_rows(
+                raw_cfg,
+                paths=paths,
+                mapping_rows=rows,
+                offline=offline,
+                tier="extended",
+                write_index=False,
+            )
+            for row in updated:
+                if len(accepted_ext_rows) >= extended_size:
+                    break
+
+                paper_id = str(row.get("paper_id") or "")
+                ft_status = str(row.get("fulltext_status") or "")
+                ft_has = bool(row.get("pdf_sha256")) or bool(row.get("source_paths") or [])
+                if require_fulltext_success and not ft_has:
+                    reason = "exclude_fulltext_missing" if ft_status in ("missing", "skipped_offline") else "exclude_fulltext_error"
+                    selection_rows_by_tier["extended"].append(
+                        {
+                            "ts_unix": int(time.time()),
+                            "track_id": t,
+                            "tier": "extended",
+                            "paper_id": paper_id,
+                            "action": "exclude",
+                            "reason_tag": reason,
+                            "evidence": {"fulltext_status": ft_status, "fulltext_error": row.get("fulltext_error")},
+                        }
+                    )
+                    continue
+
+                row["confidence_score"] = _confidence_score(row)
+
+                deps = list(row.get("dependencies") or [])
+                title = str(row.get("title") or paper_id)
+                abstract = str(row.get("abstract") or "")
+
+                try:
+                    rec = build_record_v2_from_abstract(
+                        paper_id=paper_id,
+                        track_id=t,
+                        title=title,
+                        abstract=abstract,
+                        dependencies=deps,
+                        llm=llm,
+                        ids={
+                            "doi": row.get("doi"),
+                            "arxiv_id": row.get("arxiv_id"),
+                            "openalex_id": row.get("openalex_id"),
+                            "s2_id": row.get("s2_id"),
+                            "landing_page_url": row.get("landing_page_url"),
+                        },
+                        strict_paraphrase=strict_paraphrase,
+                        max_retries=max_retries,
+                        prompt_version=prompt_version or None,
+                    )
+                except RecordBuildError as e:
+                    selection_rows_by_tier["extended"].append(
+                        {
+                            "ts_unix": int(time.time()),
+                            "track_id": t,
+                            "tier": "extended",
+                            "paper_id": paper_id,
+                            "action": "exclude",
+                            "reason_tag": "exclude_record_build_failed",
+                            "evidence": {"code": e.code, "error": str(e)},
+                        }
+                    )
+                    continue
+
+                accepted_ext_rows.append(row)
+                accepted_ext_records[paper_id] = rec
+                selection_rows_by_tier["extended"].append(
+                    {
+                        "ts_unix": int(time.time()),
+                        "track_id": t,
+                        "tier": "extended",
+                        "paper_id": paper_id,
+                        "action": "include",
+                        "reason_tag": "include_strict_fulltext_and_record_ok",
+                        "evidence": {"pool_size": pool_size},
+                    }
+                )
+
+        pending: List[Dict[str, Any]] = []
+
+        for c in selected_pool:
+            if len(accepted_ext_rows) >= extended_size:
+                break
+
             paper_id = oa_to_pid[c.openalex_id]
 
-            # Dependencies: OpenAlex referenced works restricted to selected set.
             deps = []
             for ref in c.referenced_works:
                 if ref in oa_to_pid:
                     deps.append(oa_to_pid[ref])
 
             abstract = _openalex_inverted_abstract(c.raw)
+            abstract_source = "openalex" if abstract else ""
+
             s2_meta: Optional[Dict[str, Any]] = None
             if not offline:
-                # Best-effort: prefer DOI/arXiv id if available, else search by title.
                 key = c.doi or (c.arxiv_id or "")
                 if key:
                     try:
@@ -253,12 +422,14 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
 
             if s2_meta and not abstract:
                 abstract = str(s2_meta.get("abstract") or "")
+                abstract_source = "s2" if abstract else ""
 
             arxiv_id = c.arxiv_id
             doi = c.doi
             s2_id = None
             author_pdf_url = None
             landing = None
+            s2_refs: List[str] = []
             if s2_meta and isinstance(s2_meta, dict):
                 s2_id = s2_meta.get("paperId") or None
                 landing = s2_meta.get("url") or None
@@ -269,6 +440,11 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 oa_pdf = s2_meta.get("openAccessPdf") or {}
                 if isinstance(oa_pdf, dict):
                     author_pdf_url = oa_pdf.get("url") or None
+                refs = s2_meta.get("references") or []
+                if isinstance(refs, list):
+                    for r in refs:
+                        if isinstance(r, dict) and r.get("paperId"):
+                            s2_refs.append(str(r["paperId"]))
 
             row = {
                 "tier": "extended",
@@ -278,6 +454,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 "doi": doi,
                 "arxiv_id": arxiv_id,
                 "s2_id": s2_id,
+                "s2_reference_ids": s2_refs,
                 "landing_page_url": landing,
                 "author_pdf_url": author_pdf_url,
                 "title": c.title,
@@ -286,54 +463,73 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 "dependencies": deps,
                 "concept_ids": list(c.concept_ids),
                 "abstract": abstract,
+                "abstract_source": abstract_source,
             }
-            extended_rows_all.append(row)
+            pending.append(row)
+            if len(pending) >= batch_size:
+                process_batch(pending)
+                pending = []
 
-            selection_rows_by_tier["extended"].append(
-                {
-                    "ts_unix": int(time.time()),
-                    "track_id": t,
-                    "tier": "extended",
-                    "paper_id": paper_id,
-                    "action": "include",
-                    "reason_tag": "openalex_selection_extended",
-                    "evidence": {"policy": "openalex_selection_extended"},
-                }
-            )
-            for dep_pid in deps:
-                dep_edges_by_tier["extended"].append(f"{dep_pid} {paper_id}")
+        if pending and len(accepted_ext_rows) < extended_size:
+            process_batch(pending)
+            pending = []
 
-    # Fulltext cache (private) updates mapping rows with pdf_sha256/source_paths/retrieved_at_unix.
-    extended_rows_all = cache_fulltext_for_mapping_rows(
-        raw_cfg,
-        paths=paths,
-        mapping_rows=extended_rows_all,
-        offline=offline,
-        tier="extended",
-    )
-
-    # Add deterministic confidence score signals used for core subset selection.
-    for row in extended_rows_all:
-        row["confidence_score"] = _confidence_score(row)
-
-    # Group extended rows by track.
-    ext_by_track: Dict[str, List[Dict[str, Any]]] = {t: [] for t in targets}
-    for row in extended_rows_all:
-        t = str(row.get("track_id") or "")
-        if t in ext_by_track:
-            ext_by_track[t].append(row)
-
-    # Derive core rows per track (dependency-closed prefix), then persist mapping rows.
-    core_by_track: Dict[str, List[Dict[str, Any]]] = {t: [] for t in targets}
-    for t in targets:
-        ext_rows = ext_by_track.get(t) or []
-        if not ext_rows:
+        if not accepted_ext_rows:
+            logger.warning("No extended rows selected for track %s (target=%d)", t, extended_size)
             continue
 
-        core_size = int((sizes_by_track.get(t) or {}).get("core_size", 0) or 0)
-        core_pids = derive_dependency_closed_core_paper_ids(ext_rows, core_size=core_size)
+        accepted_pids = {str(r.get("paper_id") or "") for r in accepted_ext_rows if r.get("paper_id")}
+
+        # Prune dependencies to the final accepted set.
+        for row in accepted_ext_rows:
+            row["dependencies"] = [d for d in (row.get("dependencies") or []) if d in accepted_pids]
+        for pid, rec in accepted_ext_records.items():
+            rec.public.dependencies = [d for d in (rec.public.dependencies or []) if d in accepted_pids]
+
+        # Rank is computed within-tier (extended) per track.
+        ranked_ext = sorted(
+            accepted_ext_rows,
+            key=lambda r: (-int(r.get("cited_by_count", 0) or 0), str(r.get("paper_id") or "")),
+        )
+        ext_rank_map = {str(r.get("paper_id")): i + 1 for i, r in enumerate(ranked_ext) if r.get("paper_id")}
+
+        ext_internal: List[PaperRecordInternalV2] = []
+        ext_public = []
+        for row in accepted_ext_rows:
+            pid = str(row.get("paper_id") or "")
+            rec = accepted_ext_records.get(pid)
+            if rec is None:
+                continue
+            rec.public.results.primary_metric_rank = int(ext_rank_map.get(pid, 0))
+            rec.public.provenance["tier"] = "extended"
+            rec.public.provenance["pipeline"] = "online_v2_strict"
+            rec.public.provenance["abstract_source"] = row.get("abstract_source")
+            rec.public.provenance["fulltext_source"] = row.get("fulltext_source")
+            rec.public.provenance["fulltext_status"] = row.get("fulltext_status")
+
+            rec.pdf_sha256 = row.get("pdf_sha256")
+            rec.source_paths = list(row.get("source_paths") or [])
+            rec.retrieved_at_unix = row.get("retrieved_at_unix")
+            rec.year = row.get("year")
+            ext_internal.append(rec)
+            ext_public.append(rec.public)
+
+        save_records_internal_v2(ext_internal, paths.private_records_path(t, "extended"))
+        save_records_v2(ext_public, paths.public_records_path(t, "extended"))
+
+        # Persist private mapping rows for extended.
+        _write_jsonl(paths.private_mapping_path(t, "extended"), accepted_ext_rows)
+
+        # Dependency graph edges for extended.
+        for row in accepted_ext_rows:
+            pid = str(row.get("paper_id") or "")
+            for dep_pid in row.get("dependencies") or []:
+                dep_edges_by_tier["extended"].append(f"{dep_pid} {pid}")
+
+        # Derive core subset (dependency-closed).
+        core_pids = derive_dependency_closed_core_paper_ids(accepted_ext_rows, core_size=core_size)
         core_set = set(core_pids)
-        ext_by_pid = {str(r.get("paper_id")): r for r in ext_rows if r.get("paper_id")}
+        ext_by_pid = {str(r.get("paper_id")): r for r in accepted_ext_rows if r.get("paper_id")}
 
         core_rows: List[Dict[str, Any]] = []
         for pid in core_pids:
@@ -345,6 +541,64 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             rr["dependencies"] = [d for d in (rr.get("dependencies") or []) if d in core_set]
             core_rows.append(rr)
 
+        # Optional: enrich core with OpenCitations outgoing references (DOI->DOI).
+        oc_cfg_raw = (sources_cfg.get("opencitations") or {}) if isinstance(sources_cfg, dict) else {}
+        oc_enable = bool(oc_cfg_raw.get("enable", False))
+        oc_tiers_raw = oc_cfg_raw.get("tiers") or ["core"]
+        if not isinstance(oc_tiers_raw, list):
+            oc_tiers_raw = [oc_tiers_raw]
+        oc_tiers = [str(x) for x in oc_tiers_raw if x]
+
+        if oc_enable and (not offline) and ("core" in oc_tiers):
+            oc_snap = SnapshotWriter(
+                paths.private_dir / "raw_snapshots" / "opencitations" / f"requests_track_{t}.jsonl",
+                "opencitations",
+            )
+            oc_client = OpenCitationsClient(
+                OpenCitationsConfig(
+                    base_url=str(oc_cfg_raw.get("base_url", "https://api.opencitations.net/index/v1")),
+                    rate_limit_qps=float(oc_cfg_raw.get("rate_limit_qps", 2.0)),
+                ),
+                snapshot=oc_snap,
+            )
+
+            doi_to_pid_core: Dict[str, str] = {}
+            for row in core_rows:
+                doi_norm = _normalize_doi(row.get("doi"))
+                pid = str(row.get("paper_id") or "")
+                if doi_norm and pid:
+                    doi_to_pid_core[doi_norm] = pid
+
+            for row in core_rows:
+                doi_norm = _normalize_doi(row.get("doi"))
+                if not doi_norm:
+                    continue
+
+                data = oc_client.references(doi_norm)
+                ref_dois: List[str] = []
+                if isinstance(data, list):
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        cited = item.get("cited") or item.get("cited_doi") or ""
+                        cited_norm = _normalize_doi(str(cited))
+                        if cited_norm:
+                            ref_dois.append(cited_norm)
+
+                seen: set[str] = set()
+                uniq: List[str] = []
+                for d in ref_dois:
+                    if d not in seen:
+                        seen.add(d)
+                        uniq.append(d)
+
+                row["oc_reference_dois"] = uniq
+                row["oc_reference_paper_ids"] = [doi_to_pid_core[d] for d in uniq if d in doi_to_pid_core]
+
+        _write_jsonl(paths.private_mapping_path(t, "core"), core_rows)
+
+        # Core selection log (include + exclude-from-core for auditability).
+        for pid in core_pids:
             selection_rows_by_tier["core"].append(
                 {
                     "ts_unix": int(time.time()),
@@ -353,90 +607,103 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     "paper_id": pid,
                     "action": "include",
                     "reason_tag": "core_subset_from_extended",
-                    "evidence": {"source_tier": "extended"},
+                    "evidence": {"source_tier": "extended", "core_size": core_size},
                 }
             )
-            for dep_pid in rr["dependencies"]:
-                dep_edges_by_tier["core"].append(f"{dep_pid} {pid}")
-
-        core_by_track[t] = core_rows
-
-        _write_jsonl(paths.private_mapping_path(t, "extended"), ext_rows)
-        _write_jsonl(paths.private_mapping_path(t, "core"), core_rows)
-
-    # Core is a subset of extended: write a tier-specific index without re-downloading.
-    core_rows_all: List[Dict[str, Any]] = []
-    for t in targets:
-        core_rows_all.extend(core_by_track.get(t) or [])
-    write_fulltext_index_for_mapping_rows(paths=paths, mapping_rows=core_rows_all, tier="core")
-
-    # Build v2 records for each tier.
-    rb = raw_cfg.get("record_build") or {}
-    llm_mode = str(rb.get("mode", "llm"))
-    llm: Optional[LLMClient] = None
-    if llm_mode == "llm":
-        api_key_env = str(rb.get("llm_api_key_env", "LLM_API_KEY"))
-        api_key = os.environ.get(api_key_env, "")
-        if not api_key:
-            logger.info("LLM disabled: %s is empty; using deterministic fallbacks", api_key_env)
-        else:
-            llm = LLMClient(
-                LLMConfig(
-                    model=str(rb.get("llm_model", "deepseek-chat")),
-                    api_base=str(rb.get("llm_api_base", "https://api.deepseek.com/v1")),
-                    api_key=api_key,
-                    temperature=0.0,
-                )
+        for pid in sorted(accepted_pids - core_set):
+            selection_rows_by_tier["core"].append(
+                {
+                    "ts_unix": int(time.time()),
+                    "track_id": t,
+                    "tier": "core",
+                    "paper_id": pid,
+                    "action": "exclude",
+                    "reason_tag": "exclude_not_in_core_subset",
+                    "evidence": {"core_size": core_size},
+                }
             )
 
-    def build_tier_records(tier: str, rows: List[Dict[str, Any]], track_id: str) -> None:
-        if not rows:
-            return
+        # Rank is computed within-tier (core) per track.
+        ranked_core = sorted(
+            core_rows,
+            key=lambda r: (-int(r.get("cited_by_count", 0) or 0), str(r.get("paper_id") or "")),
+        )
+        core_rank_map = {str(r.get("paper_id")): i + 1 for i, r in enumerate(ranked_core) if r.get("paper_id")}
 
-        internal: List[PaperRecordInternalV2] = []
-        public = []
+        core_internal: List[PaperRecordInternalV2] = []
+        core_public = []
+        for pid in core_pids:
+            base = accepted_ext_records.get(pid)
+            if base is None:
+                continue
+            rec = copy.deepcopy(base)
+            rec.public.dependencies = [d for d in (rec.public.dependencies or []) if d in core_set]
+            rec.public.results.primary_metric_rank = int(core_rank_map.get(pid, 0))
+            rec.public.provenance["tier"] = "core"
+            rec.public.provenance["pipeline"] = "online_v2_strict"
+            core_internal.append(rec)
+            core_public.append(rec.public)
 
-        ranked = sorted(rows, key=lambda r: (-int(r.get("cited_by_count", 0) or 0), str(r.get("paper_id"))))
-        rank_map = {str(r["paper_id"]): i + 1 for i, r in enumerate(ranked) if r.get("paper_id")}
+        save_records_internal_v2(core_internal, paths.private_records_path(t, "core"))
+        save_records_v2(core_public, paths.public_records_path(t, "core"))
 
-        for row in rows:
-            paper_id = str(row.get("paper_id", ""))
-            deps = list(row.get("dependencies") or [])
-            title = str(row.get("title") or paper_id)
-            abstract = str(row.get("abstract") or "")
-
-            rec = build_record_v2_from_abstract(
-                paper_id=paper_id,
-                track_id=track_id,
-                title=title,
-                abstract=abstract,
-                dependencies=deps,
-                llm=llm,
-                ids={
+        # Export a concise per-track paper list (private).
+        track_papers: List[Dict[str, Any]] = []
+        now_ts = int(time.time())
+        for row in accepted_ext_rows:
+            track_papers.append(
+                {
+                    "ts_unix": now_ts,
+                    "tier": "extended",
+                    "track_id": t,
+                    "paper_id": row.get("paper_id"),
+                    "openalex_id": row.get("openalex_id"),
                     "doi": row.get("doi"),
                     "arxiv_id": row.get("arxiv_id"),
-                    "openalex_id": row.get("openalex_id"),
                     "s2_id": row.get("s2_id"),
                     "landing_page_url": row.get("landing_page_url"),
-                },
+                    "author_pdf_url": row.get("author_pdf_url"),
+                    "year": row.get("year"),
+                    "cited_by_count": row.get("cited_by_count"),
+                    "fulltext_status": row.get("fulltext_status"),
+                    "pdf_sha256": row.get("pdf_sha256"),
+                    "retrieved_at_unix": row.get("retrieved_at_unix"),
+                }
             )
-            rec.public.results.primary_metric_rank = int(rank_map.get(paper_id, 0))
-            rec.public.provenance["tier"] = tier
-            rec.public.provenance["pipeline"] = "online_v1"
-            # Carry through fulltext metadata (private)
-            rec.pdf_sha256 = row.get("pdf_sha256")
-            rec.source_paths = list(row.get("source_paths") or [])
-            rec.retrieved_at_unix = row.get("retrieved_at_unix")
-            rec.year = row.get("year")
-            internal.append(rec)
-            public.append(rec.public)
+        for row in core_rows:
+            track_papers.append(
+                {
+                    "ts_unix": now_ts,
+                    "tier": "core",
+                    "track_id": t,
+                    "paper_id": row.get("paper_id"),
+                    "openalex_id": row.get("openalex_id"),
+                    "doi": row.get("doi"),
+                    "arxiv_id": row.get("arxiv_id"),
+                    "s2_id": row.get("s2_id"),
+                    "landing_page_url": row.get("landing_page_url"),
+                    "author_pdf_url": row.get("author_pdf_url"),
+                    "year": row.get("year"),
+                    "cited_by_count": row.get("cited_by_count"),
+                    "fulltext_status": row.get("fulltext_status"),
+                    "pdf_sha256": row.get("pdf_sha256"),
+                    "retrieved_at_unix": row.get("retrieved_at_unix"),
+                }
+            )
+        _write_jsonl(paths.private_track_papers_path(t), track_papers)
 
-        save_records_internal_v2(internal, paths.private_records_path(track_id, tier))
-        save_records_v2(public, paths.public_records_path(track_id, tier))
+        # Dependency graph edges for core.
+        for row in core_rows:
+            pid = str(row.get("paper_id") or "")
+            for dep_pid in row.get("dependencies") or []:
+                dep_edges_by_tier["core"].append(f"{dep_pid} {pid}")
 
-    for t in targets:
-        build_tier_records("extended", ext_by_track.get(t) or [], t)
-        build_tier_records("core", core_by_track.get(t) or [], t)
+        extended_selected_all.extend(accepted_ext_rows)
+        core_selected_all.extend(core_rows)
+
+    # Write tier-level fulltext indices for the final selected papers only.
+    write_fulltext_index_for_mapping_rows(paths=paths, mapping_rows=extended_selected_all, tier="extended")
+    write_fulltext_index_for_mapping_rows(paths=paths, mapping_rows=core_selected_all, tier="core")
 
     _write_jsonl(paths.public_selection_log_path("extended"), selection_rows_by_tier["extended"])
     _write_jsonl(paths.public_selection_log_path("core"), selection_rows_by_tier["core"])

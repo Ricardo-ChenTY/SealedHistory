@@ -72,6 +72,8 @@ sources:
   opencitations:
     base_url: "https://api.opencitations.net/index/v1"
     rate_limit_qps: 2
+    enable: true
+    tiers: ["core"]
   arxiv:
     oai_base_url: "https://export.arxiv.org/oai2"
     use_oai_pmh: true
@@ -90,8 +92,14 @@ fulltext:
   # Tier policies (preferred). Each is one of: "none" | "arxiv_only" | "arxiv_and_author_pdf"
   core:
     policy: "arxiv_and_author_pdf"
+    # Hard constraint: if fulltext download fails, exclude and backfill.
+    require_success: true
   extended:
     policy: "arxiv_and_author_pdf"
+    # Hard constraint: if fulltext download fails, exclude and backfill.
+    require_success: true
+  # Default (tier override)
+  require_success: true
   # Legacy fallback (kept for backwards compatibility)
   policy: "arxiv_and_author_pdf"
   # Optional YAML mapping paper keys -> author PDF URLs.
@@ -102,6 +110,13 @@ fulltext:
 record_build:
   # one of: "llm" | "legacy_milestones"
   mode: "llm"
+  # Strict mode: require a real LLM for public record generation.
+  # - When true, missing API key will fail the online pipeline.
+  require_llm: true
+  # Strict mode: require `background` to be a paraphrase (no fallback-to-abstract).
+  strict_paraphrase: true
+  # Retries for LLM extraction/paraphrase when JSON parsing or policy checks fail.
+  max_retries: 2
   llm_model: "deepseek-chat"
   llm_api_base: "https://api.deepseek.com/v1"
   llm_api_key_env: "LLM_API_KEY"

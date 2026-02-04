@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -97,6 +98,114 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
     return {"tier": tier, "overall": overall, "by_track": by_track}
 
 
+def _git_metadata() -> Dict[str, Any]:
+    """Best-effort git metadata for reproducible manifests."""
+    try:
+        top = (
+            subprocess.check_output(["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
+        commit = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=top, stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
+        dirty = bool(
+            subprocess.check_output(["git", "status", "--porcelain"], cwd=top, stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
+        return {"git_commit": commit, "git_dirty": dirty}
+    except Exception:
+        return {}
+
+
+def _count_jsonl(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _selection_exclusion_breakdown(selection_log_path: Path, *, track_id: Optional[str] = None) -> Dict[str, int]:
+    if not selection_log_path.exists():
+        return {}
+    counts: Dict[str, int] = {}
+    for line in selection_log_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if track_id and str(row.get("track_id") or "") != track_id:
+            continue
+        if str(row.get("action") or "") != "exclude":
+            continue
+        tag = str(row.get("reason_tag") or "unknown")
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
+
+
+def _targets_from_config(raw_cfg: Dict[str, Any], *, track: str) -> Dict[str, Dict[str, int]]:
+    targets = ["A", "B"] if track == "both" else [track]
+    out: Dict[str, Dict[str, int]] = {}
+    tracks_cfg = raw_cfg.get("tracks") or {}
+    for t in targets:
+        cfg_t = tracks_cfg.get(t) or {}
+        out[t] = {
+            "core": int(cfg_t.get("core_size") or cfg_t.get("target_min") or 0),
+            "extended": int(cfg_t.get("extended_size") or cfg_t.get("target_max") or cfg_t.get("target_min") or 0),
+        }
+    return out
+
+
+def _actuals_from_outputs(paths: DatasetPaths, *, track: str) -> Dict[str, Dict[str, int]]:
+    targets = ["A", "B"] if track == "both" else [track]
+    out: Dict[str, Dict[str, int]] = {}
+    for t in targets:
+        out[t] = {
+            "core": _count_jsonl(paths.public_records_path(t, "core")),
+            "extended": _count_jsonl(paths.public_records_path(t, "extended")),
+        }
+    return out
+
+
+def _enforce_qa_thresholds(raw_cfg: Dict[str, Any], *, qa_summary: Dict[str, Any], edge_agreement: Dict[str, Any]) -> None:
+    cfg = raw_cfg.get("qa") or {}
+    schema_req = float(cfg.get("schema_pass_rate_required", 0.0) or 0.0)
+    consistency_req = float(cfg.get("consistency_pass_rate_required", 0.0) or 0.0)
+    edge_req = float(cfg.get("edge_coverage_threshold", 0.0) or 0.0)
+
+    def require_rate(name: str, actual: float, required: float) -> None:
+        if required <= 0.0:
+            return
+        if actual + 1e-12 < required:
+            raise RuntimeError(f"QA threshold failed: {name}={actual:.4f} < required={required:.4f}")
+
+    # Schema/consistency are checked per tier.
+    for tier in ("core", "extended"):
+        summ = qa_summary.get(tier) or {}
+        require_rate(f"{tier}.schema_pass_rate", float(summ.get("schema_pass_rate", 0.0) or 0.0), schema_req)
+        require_rate(
+            f"{tier}.consistency_pass_rate",
+            float(summ.get("consistency_pass_rate", 0.0) or 0.0),
+            consistency_req,
+        )
+
+    # Edge coverage is gated on core only (benchmark tier).
+    if edge_req > 0.0:
+        core_overall = (edge_agreement.get("core") or {}).get("overall") or {}
+        n_edges = core_overall.get("n_edges") or {}
+        n_other = int(n_edges.get("s2", 0) or 0) + int(n_edges.get("opencitations", 0) or 0)
+        # If no cross-source edges are available (e.g., legacy/offline builds),
+        # the agreement metric is undefined; skip the gate.
+        if n_other > 0:
+            cov = (core_overall.get("coverage") or {}).get("openalex_by_union", 0.0)
+            require_rate("core.edge_coverage.openalex_by_union", float(cov or 0.0), edge_req)
+
+
 def build_dataset(
     config_path: Optional[Path] = None,
     offline: bool = False,
@@ -120,19 +229,52 @@ def build_dataset(
     mode = str(cfg.raw.get("record_build", {}).get("mode", "legacy_milestones"))
     if mode == "legacy_milestones":
         qa_summary = export_legacy_dataset(config_path=config_path, out_root=out_root, track=track)
+        from provetok.dataset.edge_agreement import compute_edge_agreement
+        edge_agreement = {
+            "core": compute_edge_agreement(paths=paths, tier="core", track=track),
+            "extended": compute_edge_agreement(paths=paths, tier="extended", track=track),
+        }
         from provetok.dataset.sealed_worlds import export_sealed_worlds
         sealed_summary = export_sealed_worlds(cfg.raw, paths=paths, track=track)
         from provetok.dataset.attack_suite import export_attack_suite
         export_attack_suite(paths)
         from provetok.dataset.manifest import compute_public_artifacts
         artifacts = compute_public_artifacts(paths.public_dir)
+
+        targets = _targets_from_config(cfg.raw, track=track)
+        actuals = _actuals_from_outputs(paths, track=track)
+        track_ids = list(targets.keys())
+        exclusions = {
+            "extended": {
+                "overall": _selection_exclusion_breakdown(paths.public_selection_log_path("extended")),
+                **{
+                    tid: _selection_exclusion_breakdown(paths.public_selection_log_path("extended"), track_id=tid)
+                    for tid in track_ids
+                },
+            },
+            "core": {
+                "overall": _selection_exclusion_breakdown(paths.public_selection_log_path("core")),
+                **{
+                    tid: _selection_exclusion_breakdown(paths.public_selection_log_path("core"), track_id=tid)
+                    for tid in track_ids
+                },
+            },
+        }
+
+        _enforce_qa_thresholds(cfg.raw, qa_summary=qa_summary, edge_agreement=edge_agreement)
+
         _write_json(
             paths.public_dir / "dataset_manifest.json",
             {
                 "dataset_version": cfg.dataset_version,
                 "build_mode": mode,
                 "track": track,
+                **_git_metadata(),
+                "targets": targets,
+                "actuals": actuals,
+                "selection_exclusions": exclusions,
                 "qa": qa_summary,
+                "edge_agreement": edge_agreement,
                 "confidence": {
                     "core": _compute_confidence_summary(paths, track=track, tier="core"),
                     "extended": _compute_confidence_summary(paths, track=track, tier="extended"),
@@ -156,19 +298,52 @@ def build_dataset(
         "core": run_qa(paths=paths, track=track, tier="core"),
         "extended": run_qa(paths=paths, track=track, tier="extended"),
     }
+    from provetok.dataset.edge_agreement import compute_edge_agreement
+    edge_agreement = {
+        "core": compute_edge_agreement(paths=paths, tier="core", track=track),
+        "extended": compute_edge_agreement(paths=paths, tier="extended", track=track),
+    }
     from provetok.dataset.sealed_worlds import export_sealed_worlds
     sealed_summary = export_sealed_worlds(cfg.raw, paths=paths, track=track)
     from provetok.dataset.attack_suite import export_attack_suite
     export_attack_suite(paths)
     from provetok.dataset.manifest import compute_public_artifacts
     artifacts = compute_public_artifacts(paths.public_dir)
+
+    targets = _targets_from_config(cfg.raw, track=track)
+    actuals = _actuals_from_outputs(paths, track=track)
+    track_ids = list(targets.keys())
+    exclusions = {
+        "extended": {
+            "overall": _selection_exclusion_breakdown(paths.public_selection_log_path("extended")),
+            **{
+                tid: _selection_exclusion_breakdown(paths.public_selection_log_path("extended"), track_id=tid)
+                for tid in track_ids
+            },
+        },
+        "core": {
+            "overall": _selection_exclusion_breakdown(paths.public_selection_log_path("core")),
+            **{
+                tid: _selection_exclusion_breakdown(paths.public_selection_log_path("core"), track_id=tid)
+                for tid in track_ids
+            },
+        },
+    }
+
+    _enforce_qa_thresholds(cfg.raw, qa_summary=qa_summary, edge_agreement=edge_agreement)
+
     _write_json(
         paths.public_dir / "dataset_manifest.json",
         {
             "dataset_version": cfg.dataset_version,
             "build_mode": mode,
             "track": track,
+            **_git_metadata(),
+            "targets": targets,
+            "actuals": actuals,
+            "selection_exclusions": exclusions,
             "qa": qa_summary,
+            "edge_agreement": edge_agreement,
             "confidence": {
                 "core": _compute_confidence_summary(paths, track=track, tier="core"),
                 "extended": _compute_confidence_summary(paths, track=track, tier="extended"),
