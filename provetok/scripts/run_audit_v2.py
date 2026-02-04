@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from provetok.data.schema_v2 import load_records_v2
-from provetok.dataset.audit_v2 import OrderBiasTestV2, TermRecoveryAttackV2, summary
+from provetok.dataset.audit_v2 import OrderBiasTestV2, TermRecoveryAttackV2, TimeIndexPairwiseAttackV2, summary
 from provetok.sdg.codebook import Codebook
 from provetok.utils.llm_client import LLMClient, LLMConfig
 
@@ -41,6 +41,7 @@ def main() -> None:
     results = {}
     results["term_recovery_v2"] = TermRecoveryAttackV2(llm).run(records, reverse_map, n_samples=args.n_samples)
     results["order_bias_v2"] = OrderBiasTestV2(llm).run(records)
+    results["time_index_pairwise_v2"] = TimeIndexPairwiseAttackV2(llm).run(records, n_samples=args.n_samples)
 
     out = summary(results)
     out_path = Path(args.output)

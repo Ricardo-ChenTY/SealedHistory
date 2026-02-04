@@ -51,26 +51,112 @@ def _write_lines(path: Path, lines: Iterable[str]) -> None:
 
 def default_taxonomy() -> Dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "mechanism_tags": {
-            "other": {"description": "Unclassified / placeholder tag for legacy exports."},
+            "other": {"description": "Unclassified / fallback tag when extraction is unsure."},
+            "attention": {
+                "description": "Attention-based mechanisms (soft/hard attention, self-attention).",
+                "aliases": ["self attention", "self-attention", "attn"],
+            },
+            "transformer": {
+                "description": "Transformer-family architectures (encoder/decoder, ViT, BERT, GPT).",
+                "aliases": ["vit", "bert", "gpt", "transformers"],
+            },
+            "convolution": {
+                "description": "Convolutional feature extractors (CNN/ConvNet).",
+                "aliases": ["cnn", "convnet", "conv net"],
+            },
+            "residual": {
+                "description": "Residual / skip connection style architectures (ResNet-like).",
+                "aliases": ["resnet", "skip connection", "skip-connection"],
+            },
+            "normalization": {
+                "description": "Normalization layers and training stabilization tricks (BN/LN/GN).",
+                "aliases": ["batchnorm", "batch norm", "bn", "layernorm", "layer norm", "ln"],
+            },
+            "self_supervised": {
+                "description": "Self-supervised or unsupervised representation learning.",
+                "aliases": ["self-supervised", "self supervised", "ssl"],
+            },
+            "contrastive": {
+                "description": "Contrastive objectives / instance discrimination.",
+                "aliases": ["contrastive learning", "infoNCE", "infonce"],
+            },
+            "diffusion": {
+                "description": "Diffusion / score-based generative modeling.",
+                "aliases": ["score-based", "score based"],
+            },
+            "autoregressive": {
+                "description": "Autoregressive sequence modeling.",
+                "aliases": ["auto-regressive", "causal lm", "causal"],
+            },
+            "recurrence": {
+                "description": "Recurrent mechanisms (RNN/LSTM/GRU).",
+                "aliases": ["rnn", "lstm", "gru", "recurrent"],
+            },
+            "retrieval": {
+                "description": "Retrieval-augmented mechanisms (retrieve-then-read, kNN).",
+                "aliases": ["rag", "retrieval augmented", "knn"],
+            },
+            "optimization": {
+                "description": "Optimization/training algorithm contributions (optimizers, schedules).",
+                "aliases": ["optimizer", "learning rate", "schedule"],
+            },
+            "regularization": {
+                "description": "Regularization techniques (dropout, weight decay, label smoothing).",
+                "aliases": ["dropout", "weight decay", "label smoothing"],
+            },
         },
         "task_families": {
             "unknown_task": {"description": "Task family unknown or not extracted."},
+            "image_classification": {"description": "Image classification."},
+            "object_detection": {"description": "Object detection / instance detection."},
+            "segmentation": {"description": "Semantic/instance segmentation."},
+            "representation_learning": {"description": "Representation learning (often self-supervised)."},
+            "language_modeling": {"description": "Language modeling / next-token prediction."},
+            "machine_translation": {"description": "Machine translation."},
+            "text_classification": {"description": "Text classification (incl. sentiment/topic)."},
+            "question_answering": {"description": "Question answering / reading comprehension."},
         },
         "datasets": {
             "unknown_dataset": {"description": "Dataset unknown or not extracted."},
+            "imagenet": {"description": "ImageNet (ILSVRC)."},
+            "coco": {"description": "MS COCO."},
+            "voc": {"description": "PASCAL VOC."},
+            "cifar10": {"description": "CIFAR-10."},
+            "cifar100": {"description": "CIFAR-100."},
+            "wmt14_en_de": {"description": "WMT14 English-German translation."},
+            "glue": {"description": "GLUE benchmark."},
+            "squad": {"description": "SQuAD reading comprehension."},
         },
         "metrics": {
             "unknown_metric": {"description": "Metric unknown or not extracted."},
+            "accuracy": {"description": "Accuracy / classification accuracy."},
+            "top1_accuracy": {"description": "Top-1 accuracy."},
+            "top5_accuracy": {"description": "Top-5 accuracy."},
+            "map": {"description": "Mean Average Precision (mAP)."},
+            "miou": {"description": "Mean Intersection over Union (mIoU)."},
+            "bleu": {"description": "BLEU (MT metric)."},
+            "rouge": {"description": "ROUGE (summarization metric)."},
+            "f1": {"description": "F1 score."},
+            "perplexity": {"description": "Perplexity (LM metric)."},
         },
         "compute_classes": {
             "unknown_compute": {"description": "Compute class unknown or not extracted."},
+            "small": {"description": "Small compute / lightweight training."},
+            "medium": {"description": "Medium compute."},
+            "large": {"description": "Large compute / heavy training."},
         },
         "train_regime_classes": {
             "unknown_regime": {"description": "Train regime unknown or not extracted."},
+            "small": {"description": "Small regime (few epochs/steps, small dataset)"},
+            "medium": {"description": "Medium regime"},
+            "large": {"description": "Large regime"},
         },
-        "notes": "This taxonomy is a minimal scaffold for plan.md; replace with a richer taxonomy for real releases.",
+        "notes": (
+            "This taxonomy is a starter set aligned with plan.md. "
+            "It is intentionally conservative: unknown/out-of-taxonomy values should map to 'other'/'unknown_*'."
+        ),
     }
 
 

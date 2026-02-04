@@ -54,6 +54,11 @@ _FORBIDDEN_PUBLIC_TEXT_PATTERNS: List[tuple[str, str]] = [
     ("venue", r"\b(NeurIPS|ICML|ICLR|CVPR|ICCV|ECCV|ACL|EMNLP|NAACL|COLING)\b"),
 ]
 
+_NAME_FINGERPRINT_PATTERNS: List[tuple[str, str]] = [
+    ("name_initial_surname", r"\b[A-Z]\.\s*[A-Z][a-z]{2,}\b"),
+    ("name_surname_et_al", r"\b[A-Z][a-z]{2,}\s+et\s+al\.?\b"),
+]
+
 
 class RecordBuildError(RuntimeError):
     def __init__(self, code: str, message: str):
@@ -61,14 +66,86 @@ class RecordBuildError(RuntimeError):
         self.code = code
 
 
-def _redact_public_text(text: str, *, max_chars: int = 2000) -> str:
+def _normalize_taxonomy_key(raw: str) -> str:
+    s = str(raw or "").strip().lower()
+    if not s:
+        return ""
+    s = re.sub(r"[\s\-]+", "_", s)
+    s = re.sub(r"[^a-z0-9_]+", "", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s
+
+
+def _taxonomy_mechanism_tag_vocab(taxonomy: Optional[Dict[str, Any]]) -> tuple[set[str], Dict[str, str]]:
+    """Return (allowed, alias_to_tag) for mechanism tags."""
+    allowed: set[str] = {"other"}
+    alias_to: Dict[str, str] = {}
+    if not taxonomy or not isinstance(taxonomy, dict):
+        return allowed, alias_to
+
+    mech = taxonomy.get("mechanism_tags") or {}
+    if not isinstance(mech, dict):
+        return allowed, alias_to
+
+    for tag, info in mech.items():
+        tag_norm = _normalize_taxonomy_key(tag)
+        if not tag_norm:
+            continue
+        allowed.add(tag_norm)
+        if isinstance(info, dict):
+            aliases = info.get("aliases") or []
+            if isinstance(aliases, list):
+                for a in aliases:
+                    a_norm = _normalize_taxonomy_key(a)
+                    if a_norm and a_norm not in alias_to:
+                        alias_to[a_norm] = tag_norm
+    return allowed, alias_to
+
+
+def _normalize_mechanism_tags(
+    tags: Any,
+    *,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    max_tags: int = 6,
+) -> List[str]:
+    allowed, alias_to = _taxonomy_mechanism_tag_vocab(taxonomy)
+
+    if not isinstance(tags, list):
+        tags = ["other"]
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for t in tags:
+        t_norm = _normalize_taxonomy_key(t)
+        if not t_norm:
+            continue
+        t_norm = alias_to.get(t_norm, t_norm)
+        if t_norm not in allowed:
+            t_norm = "other"
+        if t_norm not in seen:
+            seen.add(t_norm)
+            out.append(t_norm)
+        if len(out) >= max_tags:
+            break
+
+    return out or ["other"]
+
+
+def _public_text_patterns(*, forbid_names: bool) -> List[tuple[str, str]]:
+    pats = list(_FORBIDDEN_PUBLIC_TEXT_PATTERNS)
+    if forbid_names:
+        pats.extend(_NAME_FINGERPRINT_PATTERNS)
+    return pats
+
+
+def _redact_public_text(text: str, *, max_chars: int = 2000, forbid_names: bool = False) -> str:
     """Redact high-retrieval fingerprints from public text fields.
 
     This is a best-effort safety layer to keep the pipeline runnable without
     manual review. It does NOT guarantee perfect anonymization.
     """
     out = str(text or "")
-    for _, pat in _FORBIDDEN_PUBLIC_TEXT_PATTERNS:
+    for _, pat in _public_text_patterns(forbid_names=forbid_names):
         out = re.sub(pat, " ", out, flags=re.IGNORECASE)
     out = " ".join(out.split())
     return out[:max_chars]
@@ -120,11 +197,23 @@ def _heuristic_keywords(title: str, abstract: str, max_k: int = 10) -> List[str]
     return kws[:max_k]
 
 
-def _forbidden_public_text_codes(text: str) -> List[str]:
+def _forbidden_public_text_codes(
+    text: str,
+    *,
+    forbid_names: bool = False,
+    name_allowlist: Optional[Sequence[str]] = None,
+) -> List[str]:
     hits: List[str] = []
-    for code, pat in _FORBIDDEN_PUBLIC_TEXT_PATTERNS:
-        if re.search(pat, text, flags=re.IGNORECASE):
-            hits.append(code)
+    allow = [str(x).strip().lower() for x in (name_allowlist or []) if str(x).strip()]
+    for code, pat in _public_text_patterns(forbid_names=forbid_names):
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if not m:
+            continue
+        if code.startswith("name_") and allow:
+            span = str(m.group(0) or "").lower()
+            if any(a in span for a in allow):
+                continue
+        hits.append(code)
     return hits
 
 
@@ -156,14 +245,20 @@ def _contains_verbatim_span(a: Sequence[str], b_text: str, *, span_words: int) -
     return False
 
 
-def _validate_strict_background(background: str, abstract: str) -> List[str]:
+def _validate_strict_background(
+    background: str,
+    abstract: str,
+    *,
+    forbid_names: bool = False,
+    name_allowlist: Optional[Sequence[str]] = None,
+) -> List[str]:
     issues: List[str] = []
 
     bg = _normalize_public_text(background, max_chars=2000)
     if len(bg.strip()) < 40:
         issues.append("background_too_short")
 
-    forbidden = _forbidden_public_text_codes(bg)
+    forbidden = _forbidden_public_text_codes(bg, forbid_names=forbid_names, name_allowlist=name_allowlist)
     for code in forbidden:
         issues.append(f"forbidden_{code}")
 
@@ -192,6 +287,9 @@ def build_record_v2_from_abstract(
     strict_paraphrase: bool = False,
     max_retries: int = 0,
     prompt_version: Optional[str] = None,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    forbid_names: bool = False,
+    name_allowlist: Optional[List[str]] = None,
 ) -> PaperRecordInternalV2:
     """Build an internal v2 record (public + mapping metadata)."""
     ids = ids or {}
@@ -244,7 +342,12 @@ def build_record_v2_from_abstract(
             last_policy_issues = ["background_missing"]
             continue
 
-        policy_issues = _validate_strict_background(background_candidate, abstract=abstract)
+        policy_issues = _validate_strict_background(
+            background_candidate,
+            abstract=abstract,
+            forbid_names=forbid_names,
+            name_allowlist=name_allowlist,
+        )
         if policy_issues:
             last_policy_issues = policy_issues
             continue
@@ -259,7 +362,12 @@ def build_record_v2_from_abstract(
                 "background_missing",
                 f"strict_paraphrase=true but background is empty (last_llm_error={last_llm_error}, policy_issues={last_policy_issues})",
             )
-        policy_issues = _validate_strict_background(background_raw, abstract=abstract)
+        policy_issues = _validate_strict_background(
+            background_raw,
+            abstract=abstract,
+            forbid_names=forbid_names,
+            name_allowlist=name_allowlist,
+        )
         if policy_issues:
             raise RecordBuildError(
                 "background_policy_fail",
@@ -270,12 +378,11 @@ def build_record_v2_from_abstract(
         if not background_raw:
             # Best-effort: take a short prefix from the abstract as a fallback.
             background_raw = str(abstract or "").strip()[:600]
-        background = _redact_public_text(background_raw, max_chars=2000)
+        background = _redact_public_text(background_raw, max_chars=2000, forbid_names=forbid_names)
         if not background:
             background = "This work proposes a method and evaluates it on standard benchmarks."
     mech_tags = extracted.get("mechanism_tags") or ["other"]
-    if not isinstance(mech_tags, list):
-        mech_tags = ["other"]
+    mech_tags = _normalize_mechanism_tags(mech_tags, taxonomy=taxonomy, max_tags=6)
 
     keywords = extracted.get("keywords") or []
     if not isinstance(keywords, list):
@@ -297,7 +404,7 @@ def build_record_v2_from_abstract(
         track_id=track_id,
         dependencies=list(dependencies or []),
         background=background,
-        mechanism_tags=[str(t) for t in mech_tags[:6] if str(t).strip()] or ["other"],
+        mechanism_tags=mech_tags,
         formula_graph=FormulaGraph(),
         protocol=Protocol(
             task_family_id=str(proto_raw.get("task_family_id") or "unknown_task"),

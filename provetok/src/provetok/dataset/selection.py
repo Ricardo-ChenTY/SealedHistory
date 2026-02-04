@@ -132,6 +132,92 @@ def indegree_scores(nodes: Sequence[str], edges: Sequence[Tuple[str, str]]) -> D
     return {u: indeg[u] / mx for u in nodes}
 
 
+def citation_velocity_scores(
+    candidates: Sequence[WorkCandidate],
+    *,
+    ref_year: Optional[int] = None,
+) -> Dict[str, float]:
+    """Approximate 'burst/growth' via citations-per-year, normalized to [0,1]."""
+    years = [c.publication_year for c in candidates if isinstance(c.publication_year, int)]
+    if ref_year is None:
+        ref_year = max(years) if years else 2025
+
+    raw: Dict[str, float] = {}
+    for c in candidates:
+        y = c.publication_year if isinstance(c.publication_year, int) else None
+        age = max(1, int(ref_year) - int(y) + 1) if y else 10
+        raw[c.openalex_id] = float(c.cited_by_count) / float(age)
+
+    mx = max(raw.values()) if raw else 0.0
+    if mx <= 0.0:
+        return {c.openalex_id: 0.0 for c in candidates}
+    return {k: float(v) / mx for k, v in raw.items()}
+
+
+def bridge_scores(
+    nodes: Sequence[str],
+    edges: Sequence[Tuple[str, str]],
+    *,
+    community_by_node: Dict[str, str],
+) -> Dict[str, float]:
+    """Approximate 'bridge' via cross-community neighbor ratio in the internal graph."""
+    adj: Dict[str, List[str]] = {n: [] for n in nodes}
+    node_set = set(nodes)
+    for u, v in edges:
+        if u in node_set and v in node_set:
+            adj[u].append(v)
+            adj[v].append(u)
+
+    out: Dict[str, float] = {}
+    for n in nodes:
+        neigh = adj.get(n, [])
+        if not neigh:
+            out[n] = 0.0
+            continue
+        c0 = community_by_node.get(n, "")
+        cross = sum(1 for m in neigh if community_by_node.get(m, "") != c0)
+        out[n] = float(cross) / float(len(neigh))
+
+    # Normalize to [0,1] by max.
+    mx = max(out.values()) if out else 0.0
+    if mx <= 0.0:
+        return {n: 0.0 for n in nodes}
+    return {n: float(out[n]) / mx for n in nodes}
+
+
+def compute_selection_signals(
+    candidates: Sequence[WorkCandidate],
+    *,
+    ref_year: Optional[int] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Compute deterministic selection signals for auditability.
+
+    Signals are publish-safe and do not depend on any LLM outputs.
+    """
+    nodes = [c.openalex_id for c in candidates]
+    edges = build_internal_edges(candidates)
+    pr = pagerank_scores(nodes, edges)
+    indeg = indegree_scores(nodes, edges)
+    vel = citation_velocity_scores(candidates, ref_year=ref_year)
+
+    community_by: Dict[str, str] = {}
+    for c in candidates:
+        community_by[c.openalex_id] = str(c.concept_ids[0]) if c.concept_ids else ""
+    bridge = bridge_scores(nodes, edges, community_by_node=community_by)
+
+    signals: Dict[str, Dict[str, Any]] = {}
+    for c in candidates:
+        oid = c.openalex_id
+        signals[oid] = {
+            "pagerank": float(pr.get(oid, 0.0) or 0.0),
+            "indegree": float(indeg.get(oid, 0.0) or 0.0),
+            "citation_velocity": float(vel.get(oid, 0.0) or 0.0),
+            "bridge": float(bridge.get(oid, 0.0) or 0.0),
+            "community_id": community_by.get(oid, ""),
+        }
+    return signals
+
+
 def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
     """Load manual decisions keyed by paper_key (OpenAlex ID / DOI / etc.)."""
     if path is None or not str(path):
@@ -172,19 +258,27 @@ def select_works(
     topic_coverage_k: int,
     centrality_weights: Dict[str, float],
     manual_decisions: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> List[WorkCandidate]:
+    ref_year: Optional[int] = None,
+    return_signals: bool = False,
+) -> List[WorkCandidate] | Tuple[List[WorkCandidate], Dict[str, Dict[str, Any]]]:
     """Select a subset of candidates with a greedy coverage + score heuristic."""
     manual_decisions = manual_decisions or {}
 
-    nodes = [c.openalex_id for c in candidates]
-    edges = build_internal_edges(candidates)
-    pr = pagerank_scores(nodes, edges)
-    indeg = indegree_scores(nodes, edges)
+    signals_by_id = compute_selection_signals(candidates, ref_year=ref_year)
 
     def score(c: WorkCandidate) -> float:
         w_pr = float(centrality_weights.get("pagerank", 1.0))
         w_in = float(centrality_weights.get("indegree", 0.0))
-        return w_pr * float(pr.get(c.openalex_id, 0.0)) + w_in * float(indeg.get(c.openalex_id, 0.0))
+        w_vel = float(centrality_weights.get("citation_velocity", 0.0))
+        w_bridge = float(centrality_weights.get("bridge", 0.0))
+
+        s = signals_by_id.get(c.openalex_id) or {}
+        return (
+            w_pr * float(s.get("pagerank", 0.0) or 0.0)
+            + w_in * float(s.get("indegree", 0.0) or 0.0)
+            + w_vel * float(s.get("citation_velocity", 0.0) or 0.0)
+            + w_bridge * float(s.get("bridge", 0.0) or 0.0)
+        )
 
     # Apply hard excludes
     filtered: List[WorkCandidate] = []
@@ -248,7 +342,7 @@ def select_works(
         ),
     )
 
-    return selected_sorted
+    return (selected_sorted, signals_by_id) if return_signals else selected_sorted
 
 
 def assign_local_ids(selected: Sequence[WorkCandidate], track_prefix: str) -> Dict[str, str]:

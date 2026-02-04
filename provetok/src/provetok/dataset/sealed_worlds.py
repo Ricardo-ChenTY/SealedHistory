@@ -47,7 +47,11 @@ def _load_keywords_by_paper_id(paths: DatasetPaths, track: str, tiers: List[str]
 
 
 def export_sealed_worlds(cfg: Dict[str, Any], *, paths: DatasetPaths, track: str) -> Dict[str, Any]:
-    seeds = list((cfg.get("seeds") or {}).get("public_seeds") or [])
+    seeds_cfg = cfg.get("seeds") or {}
+    public_seeds = list(seeds_cfg.get("public_seeds") or [])
+    private_seeds = list(seeds_cfg.get("private_seeds") or [])
+    public_set = {int(s) for s in public_seeds}
+    private_seeds = [int(s) for s in private_seeds if int(s) not in public_set]
     sdg_cfg = cfg.get("sdg") or {}
     enable_l1 = bool(sdg_cfg.get("enable_l1", True))
     enable_l2 = bool(sdg_cfg.get("enable_l2", True))
@@ -65,9 +69,10 @@ def export_sealed_worlds(cfg: Dict[str, Any], *, paths: DatasetPaths, track: str
 
     keywords_map = _load_keywords_by_paper_id(paths, track, tiers=tiers)
 
-    manifests: Dict[str, Any] = {"seeds": []}
-    for seed in seeds:
-        seed_dir = paths.public_dir / "sealed_worlds" / str(seed)
+    manifests: Dict[str, Any] = {"seeds": [], "private_seeds": []}
+
+    def export_one_seed(*, seed: int, worlds_root: Path) -> Dict[str, Any]:
+        seed_dir = worlds_root / str(seed)
         seed_dir.mkdir(parents=True, exist_ok=True)
 
         pipeline = SDGPipelineV2(seed=int(seed), enable_l1=enable_l1, enable_l2=enable_l2, enable_l3=enable_l3)
@@ -93,14 +98,22 @@ def export_sealed_worlds(cfg: Dict[str, Any], *, paths: DatasetPaths, track: str
         cb_path = paths.private_dir / "mapping_key" / f"seed_{int(seed)}.codebook.json"
         pipeline.codebook.save(cb_path)
 
-        manifests["seeds"].append(
-            {
-                "seed": int(seed),
-                "tiers": tier_mans,
-                "codebook_sha256": _sha256_file(cb_path),
-                "sdg": {"enable_l1": enable_l1, "enable_l2": enable_l2, "enable_l3": enable_l3},
-            }
-        )
+        return {
+            "seed": int(seed),
+            "tiers": tier_mans,
+            "codebook_sha256": _sha256_file(cb_path),
+            "sdg": {"enable_l1": enable_l1, "enable_l2": enable_l2, "enable_l3": enable_l3},
+        }
+
+    # Public seeds: sealed worlds are exported under public/ (codebooks remain private).
+    for seed in sorted(public_set):
+        manifests["seeds"].append(export_one_seed(seed=int(seed), worlds_root=paths.public_dir / "sealed_worlds"))
+
+    # Private seeds: sealed worlds are exported under private/ only.
+    if private_seeds:
+        private_base = paths.private_dir / "sealed_worlds_private"
+        for seed in sorted(set(private_seeds)):
+            manifests["private_seeds"].append(export_one_seed(seed=int(seed), worlds_root=private_base))
 
     # Also export SDG config snapshot for reproducibility
     _write_json(paths.public_dir / "sdg_configs" / "sdg.json", {"sdg": {"enable_l1": enable_l1, "enable_l2": enable_l2, "enable_l3": enable_l3}})

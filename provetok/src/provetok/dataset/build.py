@@ -98,6 +98,74 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
     return {"tier": tier, "overall": overall, "by_track": by_track}
 
 
+def _count_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _compute_formula_graph_summary(paths: DatasetPaths, *, track: str, tier: str) -> Dict[str, Any]:
+    """Summarize formula_graph extraction status from private mapping rows."""
+    targets = ["A", "B"] if track == "both" else [track]
+
+    def init_counts() -> Dict[str, int]:
+        return {
+            "n_rows": 0,
+            "n_arxiv": 0,
+            "ok": 0,
+            "empty": 0,
+            "missing_source": 0,
+            "error": 0,
+            "skipped_offline": 0,
+            "skipped_non_arxiv": 0,
+            "unknown": 0,
+        }
+
+    by_track: Dict[str, Any] = {}
+    overall = init_counts()
+
+    for t in targets:
+        p = paths.private_mapping_path(t, tier)
+        if not p.exists():
+            continue
+
+        counts = init_counts()
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+
+            counts["n_rows"] += 1
+            overall["n_rows"] += 1
+
+            ft_source = str(row.get("fulltext_source") or "")
+            if ft_source == "arxiv":
+                counts["n_arxiv"] += 1
+                overall["n_arxiv"] += 1
+
+            status = str(row.get("formula_graph_status") or "")
+            key = status if status in counts else "unknown"
+            counts[key] += 1
+            overall[key] += 1
+
+        arxiv_ok_rate = (counts["ok"] / counts["n_arxiv"]) if counts["n_arxiv"] else 0.0
+        by_track[t] = {**counts, "arxiv_ok_rate": round(arxiv_ok_rate, 4)}
+
+    overall_arxiv_ok_rate = (overall["ok"] / overall["n_arxiv"]) if overall["n_arxiv"] else 0.0
+    manual_queue_n = _count_lines(paths.private_dir / "manual_formula_queue.jsonl")
+
+    return {
+        "tier": tier,
+        "overall": {**overall, "arxiv_ok_rate": round(overall_arxiv_ok_rate, 4)},
+        "by_track": by_track,
+        "manual_queue_n": manual_queue_n,
+    }
+
+
 def _git_metadata() -> Dict[str, Any]:
     """Best-effort git metadata for reproducible manifests."""
     try:
@@ -124,7 +192,7 @@ def _git_metadata() -> Dict[str, Any]:
 def _count_jsonl(path: Path) -> int:
     if not path.exists():
         return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    return _count_lines(path)
 
 
 def _selection_exclusion_breakdown(selection_log_path: Path, *, track_id: Optional[str] = None) -> Dict[str, int]:
@@ -177,6 +245,7 @@ def _enforce_qa_thresholds(raw_cfg: Dict[str, Any], *, qa_summary: Dict[str, Any
     schema_req = float(cfg.get("schema_pass_rate_required", 0.0) or 0.0)
     consistency_req = float(cfg.get("consistency_pass_rate_required", 0.0) or 0.0)
     edge_req = float(cfg.get("edge_coverage_threshold", 0.0) or 0.0)
+    other_ratio_max = float(cfg.get("taxonomy_other_ratio_max_core", 1.0) or 1.0)
 
     def require_rate(name: str, actual: float, required: float) -> None:
         if required <= 0.0:
@@ -193,6 +262,15 @@ def _enforce_qa_thresholds(raw_cfg: Dict[str, Any], *, qa_summary: Dict[str, Any
             float(summ.get("consistency_pass_rate", 0.0) or 0.0),
             consistency_req,
         )
+
+    # Taxonomy coverage (Core only): optionally cap how much falls into "other".
+    if other_ratio_max < 1.0:
+        core_tax = (qa_summary.get("core") or {}).get("taxonomy") or {}
+        other_ratio = float(core_tax.get("other_ratio", 0.0) or 0.0)
+        if other_ratio - other_ratio_max > 1e-12:
+            raise RuntimeError(
+                f"QA threshold failed: core.taxonomy.other_ratio={other_ratio:.4f} > max={other_ratio_max:.4f}"
+            )
 
     # Edge coverage is gated on core only (benchmark tier).
     if edge_req > 0.0:
@@ -279,6 +357,10 @@ def build_dataset(
                     "core": _compute_confidence_summary(paths, track=track, tier="core"),
                     "extended": _compute_confidence_summary(paths, track=track, tier="extended"),
                 },
+                "formula_graph": {
+                    "core": _compute_formula_graph_summary(paths, track=track, tier="core"),
+                    "extended": _compute_formula_graph_summary(paths, track=track, tier="extended"),
+                },
                 "sealed_worlds": sealed_summary,
                 "config_path": str(cfg.path),
                 "config": cfg.raw,
@@ -295,8 +377,8 @@ def build_dataset(
     build_online_dataset(cfg.raw, paths=paths, offline=offline, track=track)
     from provetok.dataset.qa import run_qa
     qa_summary = {
-        "core": run_qa(paths=paths, track=track, tier="core"),
-        "extended": run_qa(paths=paths, track=track, tier="extended"),
+        "core": run_qa(paths=paths, track=track, tier="core", cfg=cfg.raw),
+        "extended": run_qa(paths=paths, track=track, tier="extended", cfg=cfg.raw),
     }
     from provetok.dataset.edge_agreement import compute_edge_agreement
     edge_agreement = {
@@ -348,6 +430,10 @@ def build_dataset(
                 "core": _compute_confidence_summary(paths, track=track, tier="core"),
                 "extended": _compute_confidence_summary(paths, track=track, tier="extended"),
             },
+            "formula_graph": {
+                "core": _compute_formula_graph_summary(paths, track=track, tier="core"),
+                "extended": _compute_formula_graph_summary(paths, track=track, tier="extended"),
+            },
             "sealed_worlds": sealed_summary,
             "config_path": str(cfg.path),
             "config": cfg.raw,
@@ -379,6 +465,6 @@ def export_legacy_dataset(
     export_legacy_tracks(cfg.raw, paths=paths, track=track)
     from provetok.dataset.qa import run_qa
     return {
-        "core": run_qa(paths=paths, track=track, tier="core"),
-        "extended": run_qa(paths=paths, track=track, tier="extended"),
+        "core": run_qa(paths=paths, track=track, tier="core", cfg=cfg.raw),
+        "extended": run_qa(paths=paths, track=track, tier="extended", cfg=cfg.raw),
     }

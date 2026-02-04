@@ -7,6 +7,7 @@ remaining runnable without network (via `--offline` and cached snapshots).
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import time
@@ -16,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from provetok.data.schema_v2 import PaperRecordInternalV2, save_records_internal_v2, save_records_v2
 from provetok.dataset.fulltext import cache_fulltext_for_mapping_rows, write_fulltext_index_for_mapping_rows
+from provetok.dataset.formula_graph import extract_formula_graph_from_source_paths
 from provetok.dataset.legacy import default_taxonomy
 from provetok.dataset.paths import DatasetPaths
 from provetok.dataset.record_builder import RecordBuildError, build_record_v2_from_abstract
@@ -46,6 +48,12 @@ def _write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _append_jsonl(path: Path, row: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _load_openalex_snapshot(path: Path) -> List[Dict[str, Any]]:
@@ -103,8 +111,16 @@ def _build_openalex_filter(track_cfg: Dict[str, Any]) -> Tuple[Optional[str], Op
 def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: bool, track: str) -> None:
     targets = ["A", "B"] if track == "both" else [track]
 
-    # Always write a public taxonomy scaffold.
-    _write_json(paths.public_dir / "taxonomy.json", default_taxonomy())
+    # Always write a public taxonomy scaffold (also used to normalize tags).
+    taxonomy = default_taxonomy()
+    _write_json(paths.public_dir / "taxonomy.json", taxonomy)
+
+    def _sha256_json(obj: Any) -> str:
+        try:
+            blob = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        except Exception:
+            blob = str(obj).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
 
     sources_cfg = raw_cfg.get("sources") or {}
     oa_cfg_raw = sources_cfg.get("openalex") or {}
@@ -196,6 +212,10 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
     strict_paraphrase = bool(rb.get("strict_paraphrase", False))
     max_retries = int(rb.get("max_retries", 0) or 0)
     prompt_version = str(rb.get("prompt_version") or "")
+    forbid_names = bool(rb.get("forbid_names", False))
+    name_allowlist = rb.get("name_allowlist") or []
+    if not isinstance(name_allowlist, list):
+        name_allowlist = []
 
     if strict_paraphrase and not require_llm:
         raise ValueError("record_build.strict_paraphrase=true requires record_build.require_llm=true")
@@ -288,13 +308,21 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         pool_size = max(extended_size, int(round(extended_size * pool_mult)))
         pool_size = max(1, min(pool_size, len(candidates)))
 
-        selected_pool = select_works(
+        oa_ref_year = None
+        try:
+            oa_ref_year = int(((cfg_t.get("openalex") or {}).get("year_to") or 0) or 0) or None
+        except Exception:
+            oa_ref_year = None
+
+        selected_pool, selection_signals = select_works(
             candidates,
             target_min=pool_size,
             target_max=pool_size,
             topic_coverage_k=topic_k,
             centrality_weights=centrality_weights,
             manual_decisions=manual_decisions,
+            ref_year=oa_ref_year,
+            return_signals=True,
         )
         oa_to_pid = assign_local_ids(selected_pool, track_prefix=t)
 
@@ -361,6 +389,9 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                         strict_paraphrase=strict_paraphrase,
                         max_retries=max_retries,
                         prompt_version=prompt_version or None,
+                        taxonomy=taxonomy,
+                        forbid_names=forbid_names,
+                        name_allowlist=[str(x) for x in name_allowlist if str(x).strip()],
                     )
                 except RecordBuildError as e:
                     selection_rows_by_tier["extended"].append(
@@ -376,6 +407,42 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     )
                     continue
 
+                # Best-effort: build formula_graph from arXiv sources (if available).
+                src_paths = list(row.get("source_paths") or [])
+                has_arxiv_source = any(str(p).lower().endswith(".source") for p in src_paths) or str(
+                    row.get("fulltext_source") or ""
+                ) == "arxiv"
+
+                if offline:
+                    row["formula_graph_status"] = "skipped_offline"
+                    row["formula_graph_reason"] = "offline"
+                elif has_arxiv_source:
+                    fg, fg_status, fg_reason = extract_formula_graph_from_source_paths(src_paths)
+                    rec.public.formula_graph = fg
+                    row["formula_graph_status"] = fg_status
+                    row["formula_graph_reason"] = fg_reason
+                    row["formula_graph_n_nodes"] = len(fg.nodes)
+                    row["formula_graph_n_edges"] = len(fg.edges)
+                    if fg_status != "ok":
+                        _append_jsonl(
+                            paths.private_dir / "manual_formula_queue.jsonl",
+                            {
+                                "ts_unix": int(time.time()),
+                                "paper_id": paper_id,
+                                "track_id": t,
+                                "tier": "extended",
+                                "arxiv_id": row.get("arxiv_id"),
+                                "fulltext_source": row.get("fulltext_source"),
+                                "fulltext_status": row.get("fulltext_status"),
+                                "formula_graph_status": fg_status,
+                                "reason": fg_reason,
+                                "source_paths": src_paths,
+                            },
+                        )
+                else:
+                    row["formula_graph_status"] = "skipped_non_arxiv"
+                    row["formula_graph_reason"] = "no_arxiv_source"
+
                 accepted_ext_rows.append(row)
                 accepted_ext_records[paper_id] = rec
                 selection_rows_by_tier["extended"].append(
@@ -386,7 +453,10 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                         "paper_id": paper_id,
                         "action": "include",
                         "reason_tag": "include_strict_fulltext_and_record_ok",
-                        "evidence": {"pool_size": pool_size},
+                        "evidence": {
+                            "pool_size": pool_size,
+                            "selection_signals": row.get("selection_signals"),
+                        },
                     }
                 )
 
@@ -407,6 +477,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             abstract_source = "openalex" if abstract else ""
 
             s2_meta: Optional[Dict[str, Any]] = None
+            s2_meta_sha256: Optional[str] = None
             if not offline:
                 key = c.doi or (c.arxiv_id or "")
                 if key:
@@ -419,6 +490,8 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                         s2_meta = (s2.search(c.title, limit=1) or {}).get("data", [None])[0]
                     except Exception:
                         s2_meta = None
+                if s2_meta and isinstance(s2_meta, dict):
+                    s2_meta_sha256 = _sha256_json(s2_meta)
 
             if s2_meta and not abstract:
                 abstract = str(s2_meta.get("abstract") or "")
@@ -451,9 +524,11 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 "paper_id": paper_id,
                 "track_id": t,
                 "openalex_id": c.openalex_id,
+                "openalex_work_sha256": _sha256_json(c.raw),
                 "doi": doi,
                 "arxiv_id": arxiv_id,
                 "s2_id": s2_id,
+                "s2_meta_sha256": s2_meta_sha256,
                 "s2_reference_ids": s2_refs,
                 "landing_page_url": landing,
                 "author_pdf_url": author_pdf_url,
@@ -462,6 +537,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 "cited_by_count": c.cited_by_count,
                 "dependencies": deps,
                 "concept_ids": list(c.concept_ids),
+                "selection_signals": selection_signals.get(c.openalex_id) if isinstance(selection_signals, dict) else None,
                 "abstract": abstract,
                 "abstract_source": abstract_source,
             }
@@ -506,6 +582,11 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             rec.public.provenance["abstract_source"] = row.get("abstract_source")
             rec.public.provenance["fulltext_source"] = row.get("fulltext_source")
             rec.public.provenance["fulltext_status"] = row.get("fulltext_status")
+            snap_refs = {
+                "openalex_work_sha256": row.get("openalex_work_sha256"),
+                "s2_meta_sha256": row.get("s2_meta_sha256"),
+            }
+            rec.public.provenance["snapshot_refs"] = {k: v for k, v in snap_refs.items() if v}
 
             rec.pdf_sha256 = row.get("pdf_sha256")
             rec.source_paths = list(row.get("source_paths") or [])

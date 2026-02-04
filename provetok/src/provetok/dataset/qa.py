@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from provetok.data.schema_v2 import PaperRecordV2, load_records_v2
+from provetok.data.schema_v2 import PaperRecordV2, load_records_internal_v2, load_records_v2
 from provetok.dataset.paths import DatasetPaths
 
 
@@ -20,16 +20,39 @@ FORBIDDEN_TEXT_PATTERNS: List[Tuple[str, str]] = [
     ("venue", r"\b(NeurIPS|ICML|ICLR|CVPR|ICCV|ECCV|ACL|EMNLP|NAACL|COLING)\b"),
 ]
 
+NAME_FINGERPRINT_PATTERNS: List[Tuple[str, str]] = [
+    ("name_initial_surname", r"\b[A-Z]\.\s*[A-Z][a-z]{2,}\b"),
+    ("name_surname_et_al", r"\b[A-Z][a-z]{2,}\s+et\s+al\.?\b"),
+]
 
-def _find_forbidden(text: str) -> List[Dict[str, str]]:
+
+def _find_forbidden(
+    text: str,
+    *,
+    patterns: Optional[List[Tuple[str, str]]] = None,
+    name_allowlist: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
     issues: List[Dict[str, str]] = []
-    for code, pat in FORBIDDEN_TEXT_PATTERNS:
-        if re.search(pat, text, flags=re.IGNORECASE):
-            issues.append({"code": f"forbidden_{code}", "message": f"Matched pattern: {pat}"})
+    pats = patterns if patterns is not None else FORBIDDEN_TEXT_PATTERNS
+    allow = [str(x).strip().lower() for x in (name_allowlist or []) if str(x).strip()]
+    for code, pat in pats:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if not m:
+            continue
+        if code.startswith("name_") and allow:
+            span = str(m.group(0) or "").lower()
+            if any(a in span for a in allow):
+                continue
+        issues.append({"code": f"forbidden_{code}", "message": f"Matched pattern: {pat}"})
     return issues
 
 
-def validate_record_schema(rec: PaperRecordV2) -> List[Dict[str, str]]:
+def validate_record_schema(
+    rec: PaperRecordV2,
+    *,
+    forbidden_patterns: Optional[List[Tuple[str, str]]] = None,
+    name_allowlist: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
     issues: List[Dict[str, str]] = []
     if not rec.paper_id:
         issues.append({"code": "missing_paper_id", "message": "paper_id is empty"})
@@ -43,7 +66,7 @@ def validate_record_schema(rec: PaperRecordV2) -> List[Dict[str, str]]:
         issues.append({"code": "bad_background_type", "message": "background must be a string"})
     if len(rec.background) > 2000:
         issues.append({"code": "background_too_long", "message": "background exceeds 2000 chars"})
-    issues.extend(_find_forbidden(rec.background))
+    issues.extend(_find_forbidden(rec.background, patterns=forbidden_patterns, name_allowlist=name_allowlist))
 
     # basic nested presence checks
     if rec.formula_graph is None:
@@ -141,23 +164,133 @@ def run_qa(
     paths: DatasetPaths,
     track: str = "both",
     tier: str = "extended",
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     targets = ["A", "B"] if track == "both" else [track]
 
     all_records: List[PaperRecordV2] = []
+    internal_doi_by_pid: Dict[str, str] = {}
+
+    def norm_doi(doi: str) -> str:
+        s = str(doi or "").strip()
+        if not s:
+            return ""
+        low = s.lower()
+        for prefix in ("https://doi.org/", "http://doi.org/"):
+            if low.startswith(prefix):
+                s = s[len(prefix) :]
+                break
+        if s.lower().startswith("doi:"):
+            s = s[4:]
+        return s.strip().lower()
+
     for t in targets:
         p = paths.public_records_path(t, tier)
         if p.exists():
             all_records.extend(load_records_v2(p))
+        ip = paths.private_records_path(t, tier)
+        if ip.exists():
+            for r in load_records_internal_v2(ip):
+                pid = str(r.public.paper_id or "")
+                doi = norm_doi(str(r.doi or ""))
+                if pid and doi:
+                    internal_doi_by_pid[pid] = doi
+
+    pwc_hints: Dict[str, Dict[str, set]] = {}
+    pwc_enabled = False
+    pwc_dump_path = ""
+    if cfg and isinstance(cfg, dict):
+        pwc_cfg = ((cfg.get("sources") or {}).get("pwc_dump") or {}) if isinstance(cfg.get("sources"), dict) else {}
+        pwc_enabled = bool(pwc_cfg.get("enable", False))
+        pwc_dump_path = str(pwc_cfg.get("dump_path") or "")
+        if pwc_enabled and pwc_dump_path:
+            try:
+                from provetok.sources.pwc_dump import load_pwc_dump, normalize_doi
+
+                pwc_hints = load_pwc_dump(Path(pwc_dump_path))
+                # normalize keys defensively
+                pwc_hints = {normalize_doi(k): v for k, v in pwc_hints.items() if k}
+            except Exception:
+                pwc_hints = {}
 
     qa_rows: List[Dict[str, Any]] = []
     schema_pass = 0
     consistency_pass = 0
+    pwc_stats = {
+        "enabled": bool(pwc_enabled and pwc_dump_path),
+        "n_records_with_doi": 0,
+        "n_records_with_pwc": 0,
+        "n_task_hints": 0,
+        "n_dataset_hints": 0,
+        "n_metric_hints": 0,
+        "n_task_mismatch": 0,
+        "n_dataset_mismatch": 0,
+        "n_metric_mismatch": 0,
+    }
+
+    def norm_id(s: str) -> str:
+        s = str(s or "").strip().lower()
+        s = re.sub(r"[\s\-]+", "_", s)
+        s = re.sub(r"[^a-z0-9_]+", "", s)
+        s = re.sub(r"_+", "_", s).strip("_")
+        return s
+
+    forbid_names = False
+    name_allowlist: List[str] = []
+    if cfg and isinstance(cfg, dict):
+        rb = cfg.get("record_build") or {}
+        if isinstance(rb, dict):
+            forbid_names = bool(rb.get("forbid_names", False))
+            raw_allow = rb.get("name_allowlist") or []
+            if isinstance(raw_allow, list):
+                name_allowlist = [str(x) for x in raw_allow if str(x).strip()]
+
+    forbidden_patterns = list(FORBIDDEN_TEXT_PATTERNS) + (list(NAME_FINGERPRINT_PATTERNS) if forbid_names else [])
 
     for r in all_records:
         issues = []
-        issues.extend(validate_record_schema(r))
+        issues.extend(validate_record_schema(r, forbidden_patterns=forbidden_patterns, name_allowlist=name_allowlist))
         issues.extend(protocol_result_consistency_issues(r))
+
+        # Optional: auxiliary cross-check with Papers-with-Code dump (by DOI, using private mapping).
+        doi = internal_doi_by_pid.get(r.paper_id)
+        if doi:
+            pwc_stats["n_records_with_doi"] += 1
+        hints = pwc_hints.get(doi or "")
+        if hints:
+            pwc_stats["n_records_with_pwc"] += 1
+            proto = r.protocol
+
+            tasks = {norm_id(x) for x in (hints.get("tasks") or set()) if norm_id(x)}
+            datasets = {norm_id(x) for x in (hints.get("datasets") or set()) if norm_id(x)}
+            metrics = {norm_id(x) for x in (hints.get("metrics") or set()) if norm_id(x)}
+
+            if tasks:
+                pwc_stats["n_task_hints"] += 1
+            if datasets:
+                pwc_stats["n_dataset_hints"] += 1
+            if metrics:
+                pwc_stats["n_metric_hints"] += 1
+
+            task_id = norm_id(getattr(proto, "task_family_id", ""))
+            dataset_id = norm_id(getattr(proto, "dataset_id", ""))
+            metric_id = norm_id(getattr(proto, "metric_id", ""))
+
+            def add_hint_or_mismatch(kind: str, field_val: str, hint_set: set[str]) -> None:
+                if not hint_set:
+                    return
+                if field_val in ("unknown_task", "unknown_dataset", "unknown_metric", ""):
+                    issues.append({"code": f"pwc_{kind}_hint_available", "message": "PWC hints available; protocol field is unknown"})
+                elif field_val not in hint_set:
+                    issues.append({"code": f"pwc_{kind}_mismatch", "message": "Protocol field differs from PWC hints"})
+
+            add_hint_or_mismatch("task", task_id, tasks)
+            add_hint_or_mismatch("dataset", dataset_id, datasets)
+            add_hint_or_mismatch("metric", metric_id, metrics)
+
+            pwc_stats["n_task_mismatch"] += sum(1 for i in issues if i["code"] == "pwc_task_mismatch")
+            pwc_stats["n_dataset_mismatch"] += sum(1 for i in issues if i["code"] == "pwc_dataset_mismatch")
+            pwc_stats["n_metric_mismatch"] += sum(1 for i in issues if i["code"] == "pwc_metric_mismatch")
 
         schema_ok = not any(i["code"].startswith(("missing_", "bad_", "background_too_long", "forbidden_")) for i in issues)
         consistency_ok = not any(i["code"] in ("rank_missing",) for i in issues)
@@ -195,5 +328,6 @@ def run_qa(
         "consistency_pass_rate": (consistency_pass / len(all_records)) if all_records else 0.0,
         "dependency_graph_issues": graph_issues,
         "taxonomy": taxonomy_coverage_stats(all_records) if all_records else {},
+        "pwc": pwc_stats,
     }
     return summary

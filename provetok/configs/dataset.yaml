@@ -74,6 +74,10 @@ sources:
     rate_limit_qps: 2
     enable: true
     tiers: ["core"]
+  pwc_dump:
+    # Optional: local Papers-with-Code dump for auxiliary QA cross-checks.
+    enable: false
+    dump_path: ""
   arxiv:
     oai_base_url: "https://export.arxiv.org/oai2"
     use_oai_pmh: true
@@ -85,6 +89,10 @@ selection:
   centrality_weights:
     pagerank: 1.0
     indegree: 0.5
+    # Approximate "burst/growth" via citations-per-year (normalized).
+    citation_velocity: 0.3
+    # Approximate "bridge" via cross-community neighbor ratio (concept-community proxy).
+    bridge: 0.2
   # Optional JSONL/YAML file describing manual include/exclude decisions.
   manual_decisions_file: ""
 
@@ -121,6 +129,10 @@ record_build:
   llm_api_base: "https://api.deepseek.com/v1"
   llm_api_key_env: "LLM_API_KEY"
   prompt_version: "v1"
+  # Optional: forbid citation-like name fingerprints in public text fields.
+  forbid_names: false
+  # Allowlist substrings (case-insensitive) to suppress name-fingerprint hits (advanced use).
+  name_allowlist: []
 
 sdg:
   enable_l1: true
@@ -131,6 +143,8 @@ qa:
   edge_coverage_threshold: 0.2
   schema_pass_rate_required: 1.0
   consistency_pass_rate_required: 0.95
+  # Optional gate (Core only): if < 1.0, fail build when too many mechanism tags fall back to "other".
+  taxonomy_other_ratio_max_core: 1.0
 
 seeds:
   public_seeds: [42, 43, 44]

@@ -126,6 +126,89 @@ class OrderBiasTestV2:
         )
 
 
+class TimeIndexPairwiseAttackV2:
+    """Ask LLM to predict which record comes earlier (pairwise time-index)."""
+
+    PROMPT_TEMPLATE = (
+        "You are given two anonymised research records from a sealed domain.\n"
+        "Which one likely appears EARLIER in the research timeline?\n"
+        "Answer exactly one character: A or B.\n\n"
+        "A: [{id_a}] {bg_a}\n\n"
+        "B: [{id_b}] {bg_b}\n"
+    )
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    @staticmethod
+    def _paper_index(paper_id: str) -> int:
+        s = str(paper_id or "")
+        try:
+            return int(s.split("_", 1)[1])
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _parse_choice(text: str) -> str:
+        t = str(text or "").strip().upper()
+        if t.startswith("A"):
+            return "A"
+        if t.startswith("B"):
+            return "B"
+        # Fallback: search for isolated A/B
+        if re.search(r"\\bA\\b", t):
+            return "A"
+        if re.search(r"\\bB\\b", t):
+            return "B"
+        return "A"
+
+    def run(self, sealed_records: List[PaperRecordV2], *, n_samples: int = 30, seed: int = 42) -> AttackResult:
+        rng = random.Random(seed)
+        if len(sealed_records) < 2:
+            return AttackResult("time_index_pairwise_v2", 0.0, 0)
+
+        trials = 0
+        hits = 0
+        details: List[Dict[str, Any]] = []
+
+        records = list(sealed_records)
+        for _ in range(n_samples):
+            a, b = rng.sample(records, 2)
+            prompt = self.PROMPT_TEMPLATE.format(
+                id_a=a.paper_id,
+                id_b=b.paper_id,
+                bg_a=(a.background or "")[:220],
+                bg_b=(b.background or "")[:220],
+            )
+            resp = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=20)
+            choice = self._parse_choice(resp.content)
+
+            # Ground truth: smaller local paper_id index is earlier.
+            idx_a = self._paper_index(a.paper_id)
+            idx_b = self._paper_index(b.paper_id)
+            gold = "A" if idx_a <= idx_b else "B"
+            hit = choice == gold
+            hits += 1 if hit else 0
+            trials += 1
+            details.append(
+                {
+                    "a": a.paper_id,
+                    "b": b.paper_id,
+                    "gold": gold,
+                    "pred": choice,
+                    "hit": hit,
+                }
+            )
+
+        return AttackResult(
+            attack_name="time_index_pairwise_v2",
+            success_rate=hits / trials if trials else 0.0,
+            n_trials=trials,
+            details=details,
+            metadata={"random_baseline": 0.5, "gold_rule": "min(paper_id_index) is earlier"},
+        )
+
+
 def summary(results: Dict[str, AttackResult]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rates = []
@@ -154,4 +237,3 @@ def _get_score(llm: LLMClient, prompt: str) -> float:
     except Exception:
         nums = re.findall(r"\d+", resp.content)
         return float(nums[0]) if nums else 5.0
-
