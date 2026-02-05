@@ -120,9 +120,9 @@
 - `private/raw_snapshots/opencitations/*.jsonl`（可选）
 
 ### 2.2 选取过程与映射（可审计）
-- `public/selection_log_{core,extended}.jsonl`：每次 include/exclude 必须记录 reason_tag/evidence（不包含可逆标识符；reviewer_id 如需仅内部使用）
+- `public/selection_log_{core,extended}.jsonl`：每次 include/exclude 必须记录 reason_tag/evidence/paper_key（不包含可逆标识符；reviewer_id 允许为匿名化标注者ID，如 `r1`）
 - `private/mapping_key/paper_id_map_track_{A,B}_{core,extended}.jsonl`（至少包含）：
-  - `paper_id`, `openalex_id`, `doi`, `arxiv_id`, `s2_id`, `retrieved_at_unix`
+  - `paper_id`, `paper_key`, `openalex_id`, `doi`, `arxiv_id`, `s2_id`, `retrieved_at_unix`
 
 ### 2.3 全文缓存与索引（仅内部）
 - `private/fulltext_cache/arxiv/{arxiv_id}/...`（PDF + source）

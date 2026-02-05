@@ -1,221 +1,227 @@
-# Mohu
+# Mohu / Gap Tracker
 
-## Missing
-- [x] Missing-001: Create a single-source backlog (`docs/mohu.md`)
-  - Location: `docs/mohu.md`
-  - Acceptance: File exists with Missing/Ambiguous/Log; future gap tracking updates this file (IDs are stable).
-  - Evidence: No `docs/mohu.md` existed before this change.
-  - Notes:
+This file lists **only blocking items** for the doc-driven loop (`docs/plan.md` ↔ implementation).
 
-- [x] Missing-002: Online build can require a real LLM (strict paraphrase; no key => fail)
-  - Location: `provetok/src/provetok/dataset/pipeline.py`, `provetok/src/provetok/dataset/record_builder.py`
-  - Acceptance: When enabled, missing `LLM_API_KEY` (or configured env var) fails the online build with a clear error.
-  - Evidence: `record_build.require_llm=true` now errors early when the API key/client is missing.
-  - Notes: Enforced via `record_build.require_llm` + `LLMClient.is_configured()`.
+Rules:
+- Exactly two sections: (1) Gap, (2) Ambiguity.
+- Both sections must be **empty of unchecked items** before marking claims as PROVED in `docs/experiment.md`.
+- Once an item is closed, remove it (history lives in `docs/verify_log.md` and git).
 
-- [x] Missing-003: Strict paraphrase validation + retry/exclude/backfill
-  - Location: `provetok/src/provetok/dataset/record_builder.py`, `provetok/src/provetok/dataset/pipeline.py`, `provetok/src/provetok/dataset/qa.py`
-  - Acceptance: Public `background` must be paraphrase; forbidden fingerprints (URL/DOI/arXiv/year/venue/etc) trigger retry; persistent failure => exclude and backfill to hit target sizes.
-  - Evidence: Strict mode now retries LLM extraction and raises on policy failure; pipeline excludes failed rows and backfills from a larger OpenAlex pool.
-  - Notes: Implemented with `record_build.strict_paraphrase` + `record_build.max_retries` + pool backfill in online pipeline.
+---
 
-- [x] Missing-004: Strict fulltext policy (Extended/Core must download successfully; missing => exclude/backfill)
-  - Location: `provetok/src/provetok/dataset/fulltext.py`, `provetok/src/provetok/dataset/pipeline.py`
-  - Acceptance: When enabled, `fulltext_index_{core,extended}.jsonl` has no `missing`/`error:*` for selected papers; failures are excluded and replaced until targets are met (or a controlled shortfall is reported).
-  - Evidence: Online selection now requires successful downloads when `fulltext.*.require_success=true`; failures are excluded and replaced from the candidate pool.
-  - Notes: arXiv source is best-effort; PDF download is the success requirement; arXiv failure falls back to `author_pdf_url` when policy allows.
+## 1. Gap (not implemented)
 
-- [x] Missing-005: Selection log records *all* excludes with reason tags (esp. fulltext/paraphrase failures)
-  - Location: `provetok/src/provetok/dataset/pipeline.py`
-  - Acceptance: `public/selection_log_{core,extended}.jsonl` contains both `include` and `exclude` events with stable `reason_tag` + evidence.
-  - Evidence: Online pipeline now emits `exclude_fulltext_*` and `exclude_record_build_failed` rows (plus core subset include/exclude).
-  - Notes:
+- [x] GAP-001: Snapshot contract mismatch: request snapshots are missing from offline exports
+  - Source: `docs/plan.md` CLAIM-007; `docs/experiment.md` EXP-008; `provetok/src/provetok/dataset/pipeline.py` snapshot writers
+  - Impact scope (files):
+    - `provetok/src/provetok/sources/http.py`
+    - `provetok/src/provetok/dataset/pipeline.py`
+    - `docs/plan.md`
+    - `docs/experiment.md`
+  - Acceptance Criteria:
+    1) For every enabled source+track, the export root contains the canonical request snapshot path(s) (empty JSONL is allowed):
+       - `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`
+       - `private/raw_snapshots/s2/requests_track_{A,B}.jsonl` (when enabled)
+       - `private/raw_snapshots/opencitations/requests_track_{A,B}.jsonl` (when enabled)
+    2) OpenAlex works snapshots exist as documented:
+       - `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
+  - Verification:
+    - Command: `python provetok/scripts/run_exp_manual_decisions_offline.py --run_dir runs/EXP-006 --track both`
+    - Expected: all canonical snapshot paths required by the chosen contract exist under `runs/EXP-006/exports/**/private/raw_snapshots/**`.
+  - Evidence:
+    - 2026-02-05: PASS (offline export contains empty request snapshot files + works snapshots for A/B)
+    - Artifacts:
+      - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/requests_track_A.jsonl`
+      - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/requests_track_B.jsonl`
+      - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/s2/requests_track_A.jsonl`
+      - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/s2/requests_track_B.jsonl`
+    - Changes:
+      - `provetok/src/provetok/dataset/pipeline.py` (touch/truncate request snapshot files deterministically)
+      - `provetok/scripts/run_exp_manual_decisions_offline.py` (write works snapshots + config for Track A/B)
 
-- [x] Missing-006: Export final paper lists per track (`track_{A,B}_papers.jsonl`)
-  - Location: `provetok/src/provetok/dataset/pipeline.py`, `provetok/src/provetok/dataset/paths.py`
-  - Acceptance: Export per-track final selection lists including `paper_id` and internal IDs (OpenAlex/DOI/arXiv/S2) and timestamps (private).
-  - Evidence: `private/track_{A,B}_papers.jsonl` is now exported per build.
-  - Notes:
+- [x] GAP-002: EXP-008 evidence is under-checking CLAIM-007 (only validates OpenAlex works A)
+  - Source: `docs/plan.md` CLAIM-007; `docs/experiment.md` EXP-008
+  - Impact scope (files):
+    - `docs/experiment.md`
+    - `docs/plan.md`
+  - Acceptance Criteria:
+    1) Update EXP-008 to validate *all* snapshot paths promised by CLAIM-007 (including request snapshots and Track B when applicable).
+    2) EXP-008 produces a log artifact under `runs/EXP-008/` listing every checked path.
+  - Verification:
+    - Command: run EXP-006 then EXP-008 as documented
+    - Expected: EXP-008 PASS only if every required path exists.
+  - Evidence:
+    - 2026-02-05: PASS
+    - Artifact: `runs/EXP-008/snapshot_contract.log`
+    - Changes: `docs/experiment.md` (EXP-008 now checks OpenAlex works+requests for A/B and S2 request snapshots for A/B)
 
-- [x] Missing-007: Integrate OpenCitations into the online pipeline with snapshot logging
-  - Location: `provetok/src/provetok/sources/opencitations_client.py`, `provetok/src/provetok/dataset/pipeline.py`
-  - Acceptance: `private/raw_snapshots/opencitations/requests_track_{A,B}.jsonl` exists and records best-effort citation responses/errors.
-  - Evidence: Online pipeline now calls OpenCitations `references()` for core DOIs (configurable), with SnapshotWriter logs.
-  - Notes:
+- [x] GAP-003: Offline rebuild “no network access” is not proven
+  - Source: `docs/plan.md` CLAIM-007 (offline rebuild definition)
+  - Impact scope (files):
+    - `provetok/src/provetok/dataset/pipeline.py`
+    - `provetok/src/provetok/sources/http.py`
+    - `docs/experiment.md`
+  - Acceptance Criteria:
+    1) Add an automated check (test or experiment) that fails if any network call is attempted during an `--offline` dataset build when snapshots exist.
+    2) Record the check result in `docs/experiment.md` (new EXP row or extend EXP-008/EXP-007).
+  - Verification:
+    - Command: `python -m pytest -q`
+    - Expected: an explicit offline-no-network test passes; evidence is saved under `runs/EXP-00x/`.
+  - Evidence:
+    - 2026-02-05: PASS (see `runs/EXP-007/pytest.log`)
+    - Changes:
+      - `provetok/src/provetok/dataset/pipeline.py` (offline disables LLM usage)
+      - `provetok/tests/test_offline_no_network.py` (blocks urlopen + LLMClient.chat; asserts offline build completes)
+      - `docs/plan.md` / `docs/experiment.md` (CLAIM-007 now also evidenced by EXP-007)
 
-- [x] Missing-008: Compute cross-source edge coverage/agreement (OpenAlex/S2/OpenCitations) and report in manifest
-  - Location: (new) `provetok/src/provetok/dataset/edge_agreement.py`, `provetok/src/provetok/dataset/build.py`
-  - Acceptance: `public/dataset_manifest.json` includes edge counts + overlap metrics + coverage rates; optionally gate via thresholds.
-  - Evidence: Build now computes `edge_agreement` for core/extended and writes it into the public manifest.
-  - Notes:
+- [x] GAP-004: Manual decisions + paper_key audit evidence only covers Track A
+  - Source: `docs/plan.md` CLAIM-005/006; `docs/experiment.md` EXP-006
+  - Impact scope (files):
+    - `provetok/scripts/run_exp_manual_decisions_offline.py`
+    - `docs/experiment.md`
+  - Acceptance Criteria:
+    1) Decide whether CLAIM-005/006 require Track B coverage; if yes, add a reproducible run for Track B (or `--track both`) and record it in `docs/experiment.md`.
+    2) The exported `public/selection_log_extended.jsonl` for Track B contains manual-decision rows with `reviewer_id`, `reason_tag`, and `paper_key`.
+  - Verification:
+    - Command: `python provetok/scripts/run_exp_manual_decisions_offline.py --run_dir runs/EXP-006B --track B`
+    - Expected: logs and mapping rows contain `paper_key`, and manual rows contain `reviewer_id`.
+  - Evidence:
+    - 2026-02-05: PASS (ran Track B-only and Track A/B)
+    - Artifacts:
+      - `runs/EXP-006B/exports/exp-006-manual-decisions/public/selection_log_extended.jsonl` (contains `reviewer_id` rows for `track_id` B)
+      - `runs/EXP-006B/exports/exp-006-manual-decisions/private/mapping_key/paper_id_map_track_B_extended.jsonl` (contains `paper_key`)
+      - `runs/EXP-006/exports/exp-006-manual-decisions/public/selection_log_extended.jsonl` (contains `reviewer_id` rows for `track_id` A and B)
+      - `runs/EXP-006/exports/exp-006-manual-decisions/private/mapping_key/paper_id_map_track_B_extended.jsonl` (contains `paper_key`)
+    - Changes:
+      - `provetok/scripts/run_exp_manual_decisions_offline.py` (adds manual decisions for W3/W4)
+      - `docs/experiment.md` (EXP-006 now uses `--track both`)
 
-- [x] Missing-009: Make QA thresholds enforceable (fail build when thresholds not met)
-  - Location: `provetok/src/provetok/dataset/build.py`, `provetok/src/provetok/dataset/qa.py`
-  - Acceptance: When enabled, schema/consistency/edge-coverage thresholds produce non-zero exit/failure with a clear reason recorded in the manifest.
-  - Evidence: Build now enforces schema/consistency rates and (when cross-source edges exist) core edge-coverage threshold.
-  - Notes:
+- [x] GAP-005: Doc contracts disagree about `reviewer_id`/`paper_key` in public selection logs
+  - Source: `docs/plan.md` CLAIM-005; `docs/data_requirements.md` and `docs/collection_checklist.md` selection-log text
+  - Impact scope (files):
+    - `docs/plan.md`
+    - `docs/data_requirements.md`
+    - `docs/collection_checklist.md`
+    - `docs/templates/manual_decisions.jsonl`
+  - Acceptance Criteria:
+    1) Resolve `reviewer_id` policy (see AMB-001) and make all docs consistent.
+    2) Explicitly list `paper_key` as a required field wherever selection-log/mapping contracts are defined.
+  - Verification:
+    - Command: docs review + rerun EXP-006
+    - Expected: docs do not contradict each other; generated logs match the documented contract.
+  - Evidence:
+    - 2026-02-05: PASS
+    - Docs:
+      - `docs/data_requirements.md` (selection_log requires paper_key; reviewer_id allowed if anonymized)
+      - `docs/collection_checklist.md` (same policy wording)
+    - Run artifacts:
+      - `runs/EXP-006/exports/exp-006-manual-decisions/public/selection_log_extended.jsonl`
 
-- [x] Missing-010: Upgrade `taxonomy.json` beyond a scaffold, and enforce tags belong to taxonomy
-  - Location: `provetok/src/provetok/dataset/legacy.py`, `provetok/src/provetok/dataset/record_builder.py`
-  - Acceptance: Taxonomy includes defined tag sets; record builder restricts/normalizes tags; QA reports `other_ratio` and can gate it for Core.
-  - Evidence: Current taxonomy is mostly `unknown_*` / `other`.
-  - Implementation:
-    - Expanded `default_taxonomy()` (version=2) with a non-trivial starter taxonomy + aliases.
-    - Normalized `mechanism_tags` to taxonomy vocab in `build_record_v2_from_abstract(..., taxonomy=...)` (unknown/out-of-taxonomy → `other`).
-    - Added optional Core-only QA gate `qa.taxonomy_other_ratio_max_core` (disabled by default).
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
+- [x] GAP-006: Missing JSON schema(s) for selection logs and mapping JSONL
+  - Source: `docs/plan.md` §3.4 (contracts); `docs/schemas/` currently only contains `paper_record_v2.schema.json`
+  - Impact scope (files):
+    - `docs/schemas/`
+    - `docs/plan.md`
+    - `docs/experiment.md`
+  - Acceptance Criteria:
+    1) Add JSON schema(s) for:
+       - `public/selection_log_{core,extended}.jsonl` rows
+       - `private/mapping_key/paper_id_map_track_{A,B}_{core,extended}.jsonl` rows
+    2) Add a runnable validation command (test or script) that checks a produced export against these schemas.
+  - Verification:
+    - Command: `python -m pytest -q` (or a dedicated schema-check command recorded in `docs/experiment.md`)
+    - Expected: schema validation passes for `runs/exports/**` and `runs/EXP-006/**`.
+  - Evidence:
+    - 2026-02-05: PASS (see `runs/EXP-007/pytest.log`)
+    - Schemas:
+      - `docs/schemas/selection_log_row.schema.json`
+      - `docs/schemas/paper_id_map_row.schema.json`
+    - Tests:
+      - `provetok/tests/test_export_schema_validation.py`
 
-- [x] Missing-011: Build `formula_graph` from arXiv sources + maintain `manual_formula_queue`
-  - Location: (new) `provetok/src/provetok/dataset/formula_graph.py`, `provetok/src/provetok/dataset/pipeline.py`
-  - Acceptance: For arXiv-source papers, `formula_graph` is non-empty for a meaningful subset; failures are appended to `private/manual_formula_queue.jsonl` with reasons and reported in manifest.
-  - Evidence: Current `formula_graph` is always empty and there is no failure queue.
-  - Implementation:
-    - Added best-effort TeX formula extraction (`provetok/src/provetok/dataset/formula_graph.py`) and populate `public.formula_graph` for arXiv-source rows.
-    - Append extraction failures to `private/manual_formula_queue.jsonl` with reason + source paths.
-    - Report aggregated extraction status in `public/dataset_manifest.json` (`formula_graph.*`).
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
+- [x] GAP-007: Manual decisions accepted key forms are implemented but not documented
+  - Source: `docs/plan.md` CLAIM-006 canonical `paper_key`; `docs/templates/manual_decisions.jsonl` uses OpenAlex URLs; implementation normalizes/aliases
+  - Impact scope (files):
+    - `docs/plan.md`
+    - `docs/templates/manual_decisions.jsonl`
+    - `provetok/src/provetok/dataset/selection.py`
+  - Acceptance Criteria:
+    1) Document which key forms are accepted in `selection.manual_decisions_file` (canonical and allowed aliases).
+    2) Provide at least one example row per accepted key form.
+  - Verification:
+    - Command: `python -m pytest -q`
+    - Expected: a test covers alias matching; docs/examples reflect the tested behavior.
+  - Evidence:
+    - 2026-02-05: PASS (see `runs/EXP-007/pytest.log`)
+    - Docs:
+      - `docs/plan.md` (§3.4 manual decisions input contract + key forms)
+      - `docs/templates/manual_decisions.jsonl` (examples for OpenAlex/DOI/arXiv/key-from-fields)
+    - Tests:
+      - `provetok/tests/test_manual_decisions_logging.py` (OpenAlex URL alias matching)
+      - `provetok/tests/test_manual_decisions_conflict.py` (conflict detection)
 
-- [x] Missing-012: Add field-level provenance (at least source type + snapshot references)
-  - Location: `provetok/src/provetok/dataset/pipeline.py`, `provetok/src/provetok/dataset/record_builder.py`
-  - Acceptance: Provenance includes `abstract_source` and `fulltext_source` and links to raw snapshot request logs (by sha256 or URL).
-  - Evidence: `abstract_source` and `fulltext_source` are now added for online builds.
-  - Notes: Still missing snapshot references (e.g., request-log sha256) in public provenance.
-  - Implementation:
-    - Added `provenance.snapshot_refs` with `openalex_work_sha256` and (when available) `s2_meta_sha256` for online builds.
-    - Added an offline-online integration test to ensure `snapshot_refs` is present without network.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
+## 2. Ambiguity (plan vs implementation unclear)
 
-- [x] Missing-013: Expand v2 attack suite with a time-index/canonical-order test (script + docs)
-  - Location: `provetok/src/provetok/dataset/audit_v2.py`, `provetok/scripts/run_audit_v2.py`, `provetok/src/provetok/dataset/attack_suite.py`
-  - Acceptance: `public/attack_suite/` documents a runnable command producing metrics for at least one additional order/time-based test.
-  - Evidence: Current v2 suite has term recovery + order bias proxy only.
-  - Implementation:
-    - Added `TimeIndexPairwiseAttackV2` (pairwise "which comes earlier" accuracy) and wired it into `run_audit_v2.py`.
-    - Updated public `attack_suite/README.md` template to document new metrics.
-    - Added unit test for the new v2 attack.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
+- [x] AMB-001: Is `reviewer_id` allowed in public logs, and what anonymization is required?
+  - Ambiguity:
+    - `docs/plan.md` CLAIM-005 requires `reviewer_id` in `public/selection_log_extended.jsonl`.
+    - `docs/data_requirements.md` / `docs/collection_checklist.md` imply `reviewer_id` might be internal-only.
+  - Needed decision (must become executable spec):
+    - Option A (recommended): Allow `reviewer_id` in public selection logs, but require it to be an anonymized stable label (e.g., `r1`) and forbid reversible identifiers.
+    - Option B: Remove `reviewer_id` from public logs; keep it in private logs only; update CLAIM-005 + experiments accordingly.
+  - Verification:
+    - Rerun EXP-006 and check the relevant log(s) match the chosen policy.
+  - Decision:
+    - Chosen: Option A (allow anonymized `reviewer_id` in public selection logs; no reversible identifiers)
+  - Evidence:
+    - `docs/data_requirements.md` / `docs/collection_checklist.md` align with CLAIM-005 wording
+    - `runs/EXP-006/exports/exp-006-manual-decisions/public/selection_log_extended.jsonl` contains `reviewer_id`
 
-- [x] Missing-014: Implement additional selection signals (burst/community/bridge) *or* downgrade plan claims
-  - Location: `provetok/src/provetok/dataset/selection.py`, `plan.md`
-  - Acceptance: Either add deterministic computations and include them in evidence/logs, or revise plan.md to mark them as future work.
-  - Evidence: Plan mentions these signals; code does not implement them.
-  - Implementation:
-    - Added deterministic selection signals in `compute_selection_signals()`:
-      - `citation_velocity` (burst/growth proxy: citations-per-year normalized)
-      - `bridge` (bridge proxy: cross-community neighbor ratio using OpenAlex concept community proxy)
-    - Wired signals into scoring via `selection.centrality_weights.*` and persisted them into `selection_log_extended.jsonl` evidence (`selection_signals`).
-    - Updated `provetok/configs/dataset.yaml` to include non-zero default weights and added unit tests.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
+- [x] AMB-002: Are request snapshot files required to exist even when offline mode makes zero requests?
+  - Ambiguity:
+    - CLAIM-007 lists canonical `requests_track_*.jsonl` paths, but offline runs may naturally produce no request rows.
+  - Needed decision:
+    - Option A (recommended): Paths MUST exist (possibly empty JSONL) for enabled sources/tracks to make the export layout deterministic.
+    - Option B: Paths are optional; exist only if at least one request was made; docs must say “may be absent”.
+  - Verification:
+    - Update CLAIM-007 + EXP-008 to match; validate against an offline export like `runs/EXP-006/exports/**`.
+  - Decision:
+    - Chosen: Option A (paths MUST exist; empty JSONL allowed)
+  - Evidence:
+    - `docs/plan.md` (CLAIM-007 clarifies empty request snapshots are allowed)
+    - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/requests_track_A.jsonl`
+    - `runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/s2/requests_track_A.jsonl`
+    - `runs/EXP-008/snapshot_contract.log`
 
-- [x] Missing-015: Record git commit hash + dirty state in dataset manifest
-  - Location: `provetok/src/provetok/dataset/build.py`
-  - Acceptance: `public/dataset_manifest.json` includes `git_commit` and `git_dirty` when `.git` exists.
-  - Evidence: Build now writes `git_commit` and `git_dirty` when run inside a git repo.
-  - Notes:
+- [x] AMB-003: Should OpenCitations request snapshots be part of the canonical contract?
+  - Ambiguity:
+    - Implementation writes `private/raw_snapshots/opencitations/requests_track_{t}.jsonl` (when enabled).
+    - CLAIM-007 currently only mentions OpenAlex + S2.
+  - Needed decision:
+    - Option A (recommended): Include OpenCitations request snapshots in the contract when OpenCitations is enabled by config.
+    - Option B: Keep OpenCitations as an optional best-effort source; exclude from contract.
+  - Verification:
+    - Align docs + EXP-008 checks with the chosen scope.
+  - Decision:
+    - Chosen: Option B (keep OpenCitations optional best-effort; exclude from the core snapshot contract)
+  - Evidence:
+    - `docs/data_requirements.md` lists `private/raw_snapshots/opencitations/*.jsonl` as optional
+    - `provetok/src/provetok/dataset/pipeline.py` gates OpenCitations on `sources.opencitations.enable=true` and non-offline
 
-- [x] Missing-016: Integrate Papers-with-Code dump as an auxiliary QA cross-check *or* downgrade plan claims
-  - Location: (new) `provetok/src/provetok/sources/pwc_dump.py`, `provetok/src/provetok/dataset/qa.py`, `plan.md`
-  - Acceptance: Either (a) ingest PWC dump for paper↔task/dataset/metric hints and emit mismatch warnings in `qa_report_*.jsonl`, or (b) revise plan.md to state PWC is future work.
-  - Evidence: Plan lists PWC dumps as a source for cross-checking, but no code currently consumes it.
-  - Implementation:
-    - Added optional PWC dump ingestion (`provetok/src/provetok/sources/pwc_dump.py`) supporting JSON/JSONL (+ `.gz`) and DOI-based hint mapping.
-    - Plumbed dataset config into `run_qa(..., cfg=...)` and emit PWC hint/mismatch warnings (by DOI via private internal mapping).
-    - Added `sources.pwc_dump` config stanza and unit test covering hint warnings.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
-
-- [x] Missing-017: Support private (hidden) SDG seeds for leaderboard use
-  - Location: `provetok/src/provetok/dataset/sealed_worlds.py`, `provetok/configs/dataset.yaml`
-  - Acceptance: `seeds.private_seeds` are generated into `private/` only (no public sealed worlds), with codebooks saved and referenced in the dataset manifest.
-  - Evidence: Config has `private_seeds`, but export only uses `public_seeds`.
-  - Implementation:
-    - Added `seeds.private_seeds` handling: export worlds under `private/sealed_worlds_private/{seed}/...` only.
-    - Keep codebooks under `private/mapping_key/seed_{seed}.codebook.json` and include `sealed_worlds.private_seeds` entries in `public/dataset_manifest.json`.
-    - Added unit test asserting private seeds never appear under `public/sealed_worlds/`.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
-
-- [x] Missing-018: Report tier shortfalls vs target sizes with reason breakdown
-  - Location: `provetok/src/provetok/dataset/build.py`, `provetok/src/provetok/dataset/pipeline.py`
-  - Acceptance: If a tier ends with `< target_size`, `public/dataset_manifest.json` records actual counts and a stable breakdown of exclusions (e.g., `fulltext_missing`, `fulltext_error`, `llm_policy_fail`).
-  - Evidence: Build now records `targets`, `actuals`, and `selection_exclusions` (overall + per-track) in the manifest.
-  - Notes:
-
-- [x] Missing-019: Make benchmark `provetok run` importable + runnable from a fresh git checkout
-  - Location: `.gitignore`, `provetok/src/provetok/env/`, `provetok/src/provetok/cli.py`, `provetok/src/provetok/agents/base.py`
-  - Acceptance:
-    - `git ls-files provetok/src/provetok/env/environment.py` prints the file path (env package is tracked in git, i.e., not lost due to ignore rules).
-    - `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_a.sealed.jsonl --raw provetok/data/raw/micro_history_a.jsonl --output /tmp/eval_report.json` completes and writes a report with top-level keys `rubric`, `audit`, `pareto`.
-  - Evidence: `.gitignore` currently ignores any `env/` directory, so `provetok/src/provetok/env` is missing from git tracking; `provetok.cli run` imports it.
-  - Implementation:
-    - Updated `.gitignore` to unignore `provetok/src/provetok/env/**` so the benchmark environment package is tracked.
-    - Added a CLI smoke test `provetok/tests/test_benchmark_smoke.py` to run `provetok run` with the random baseline and validate the JSON report schema.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-05 via `./.venv/bin/python -m pytest -q`
-  - Notes:
-
-- [x] Missing-020: Provide a sealed sample for Track B and ensure `provetok run` works on it
-  - Location: `provetok/data/raw/micro_history_b.jsonl`, `provetok/data/sealed/`
-  - Acceptance:
-    - `provetok/data/sealed/micro_history_b.sealed.jsonl` (and its `.codebook.json`) exist in the repo.
-    - `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json` completes successfully.
-  - Evidence: Raw Track B sample exists, but the sealed counterpart is missing, blocking out-of-the-box Track B benchmark smoke runs.
-  - Implementation:
-    - Generated `provetok/data/sealed/micro_history_b.sealed.jsonl` and `provetok/data/sealed/micro_history_b.sealed.codebook.json` via `provetok cli seal` (seed=42).
-  - Next: `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json`
-  - Verified: 2026-02-05 via `./.venv/bin/python -m provetok.cli run --agent random --sealed provetok/data/sealed/micro_history_b.sealed.jsonl --raw provetok/data/raw/micro_history_b.jsonl --output /tmp/eval_report_b.json`
-  - Notes:
-
-## Ambiguous
-- [x] Amb-001: Define "public fulltext accessible" verification precisely
-  - Location: `plan.md` Phase 4; implementation in `provetok/src/provetok/dataset/fulltext.py`
-  - Question: For arXiv papers, must both PDF and source download? For author PDFs, must GET succeed fully? How many retries/timeouts?
-  - Needed: A crisp policy per tier and a deterministic retry/timeout strategy.
-  - Proposed spec: Require PDF download success for all; fetch arXiv source best-effort; for arXiv failure, fall back to author PDF when policy allows.
-  - Notes: Implemented in `cache_fulltext_for_mapping_rows()` + strict selection in the online pipeline.
-
-- [x] Amb-002: Name/identity fingerprint policy in public text
-  - Location: `provetok/src/provetok/dataset/record_builder.py`, `provetok/src/provetok/dataset/qa.py`
-  - Question: Do we forbid person-name patterns in public `background`, or only forbid explicit author fields?
-  - Needed: A concrete allow/deny rule (regex + allowlist) to reduce false positives.
-  - Proposed spec: Start with URL/DOI/arXiv/year/venue bans; make name-ban optional behind a config flag.
-  - Resolution:
-    - Add optional `record_build.forbid_names` (default false) to forbid *citation-like* name fingerprints in public text:
-      - `Surname et al.` and `A. Surname` patterns (case-insensitive).
-    - Add `record_build.name_allowlist` (list of substrings) to suppress false positives by match-span substring checks.
-    - When enabled:
-      - Strict build treats matches as policy violations (retry/exclude/backfill).
-      - Non-strict mode redacts these patterns from public text.
-      - QA reports `forbidden_name_*` hits under the existing forbidden-text check.
-  - Implementation:
-    - Implemented optional patterns in record builder + QA, wired via `provetok/configs/dataset.yaml` (`record_build.forbid_names`, `record_build.name_allowlist`).
-    - Added unit tests covering default allow, forbid, and allowlist behavior.
-  - Next: `./.venv/bin/python -m pytest -q`
-  - Verified: 2026-02-04 via `./.venv/bin/python -m pytest -q`
-  - Notes:
-
-- [x] Amb-003: Edge agreement alignment key for S2/OpenCitations
-  - Location: (new) `provetok/src/provetok/dataset/edge_agreement.py`
-  - Question: Should edge agreement be computed only on DOI-mapped edges, or allow title-similarity fallbacks?
-  - Needed: Decision on denominator and fallback strategy.
-  - Proposed spec: DOI-only for OpenCitations agreement; S2 agreement uses S2 paperId mapping.
-  - Notes: Implemented as DOI-only OC edges + internal ID mapping for S2 edges.
-
-## Log
-- 2026-02-04: Initialized Mohu backlog for plan.md alignment.
-- 2026-02-04: Marked Missing-001 complete; added Missing-016..018 for PWC/private seeds/shortfall reporting gaps.
-- 2026-02-04: Completed Missing-002..009, Missing-015, Missing-018; resolved Amb-001/Amb-003 by implementing strict fulltext + edge agreement.
-- 2026-02-04: Refreshed `docs/repo_inventory.md`; reviewed Mohu against `plan.md` (no new IDs added).
-- 2026-02-04: Closed all remaining Missing/Ambiguous items; verification PASS recorded in `docs/verify_log.md`.
-- 2026-02-05: Closed benchmark run gaps: tracked `provetok.env`, added `provetok run` smoke test, and provided sealed Track B sample.
+- [x] AMB-004: Manual-decision matching priority and conflict handling are undocumented
+  - Ambiguity:
+    - Manual decisions can be keyed by `paper_key` and various aliases (DOI/arXiv/OpenAlex URL).
+    - It is unclear what happens when multiple keys match or decisions conflict.
+  - Needed decision:
+    - Define matching priority (e.g., canonical `paper_key` first, then DOI, then arXiv, then OpenAlex).
+    - Define conflict behavior (e.g., fail build if a single work matches multiple conflicting decisions).
+  - Verification:
+    - Add unit tests for priority and conflict behavior and record them under EXP-007.
+  - Decision:
+    - Matching priority: candidate canonical `paper_key` first, then DOI, then arXiv, then OpenAlex aliases
+    - Conflict behavior: if multiple matching keys disagree on `action`, fail fast with `ValueError`
+  - Evidence:
+    - `provetok/src/provetok/dataset/selection.py` (`match_manual_decision`)
+    - `provetok/src/provetok/dataset/pipeline.py` (uses `match_manual_decision`)
+    - `provetok/tests/test_manual_decisions_conflict.py`
+    - `runs/EXP-007/pytest.log`

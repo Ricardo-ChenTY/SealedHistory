@@ -79,7 +79,7 @@ python3 -m venv .venv
 
 ### C3-02 人工裁剪（可选）
 - 输入：复制 `docs/templates/manual_decisions.jsonl` 到自定义路径，并在 `dataset.yaml` 配 `selection.manual_decisions_file`
-- 验收：selection_log 对 include/exclude 有 reason_tag/evidence（reviewer_id 如需仅内部使用）
+- 验收：selection_log 对 include/exclude 有 reason_tag/evidence/paper_key；reviewer_id 允许为匿名化标注者ID（如 `r1`）
 
 ---
 

@@ -190,10 +190,8 @@ class BenchmarkEnvironment:
         ablations: Dict[str, float] = {}
         if isinstance(extra, dict):
             for k, v in extra.items():
-                try:
+                if isinstance(v, (int, float)):
                     ablations[str(k)] = float(v)
-                except Exception:
-                    continue
 
         return ExperimentFeedback(
             success=True,

@@ -12,11 +12,7 @@ from typing import Any, Dict, List
 
 def plot_pareto(report_path: Path, output_path: Path) -> None:
     """Plot Leakage-Utility Pareto front from an eval report JSON."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("matplotlib not installed; skipping plot")
-        return
+    import matplotlib.pyplot as plt
 
     with open(report_path, "r", encoding="utf-8") as f:
         report = json.load(f)
@@ -64,12 +60,8 @@ def plot_pareto(report_path: Path, output_path: Path) -> None:
 
 def plot_rubric_radar(report_path: Path, output_path: Path) -> None:
     """Plot rubric dimension radar chart."""
-    try:
-        import matplotlib.pyplot as plt
-        import numpy as np
-    except ImportError:
-        print("matplotlib/numpy not installed; skipping plot")
-        return
+    import matplotlib.pyplot as plt
+    import numpy as np
 
     with open(report_path, "r", encoding="utf-8") as f:
         report = json.load(f)

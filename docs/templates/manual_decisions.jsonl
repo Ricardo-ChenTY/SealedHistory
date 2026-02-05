@@ -1,3 +1,7 @@
 {"paper_key":"https://openalex.org/W0000000000","action":"exclude","reason_tag":"not_fulltext_available","reviewer_id":"r1","evidence":"No arXiv id and no author public PDF URL found at review time."}
 {"paper_key":"https://openalex.org/W0000000001","action":"include","reason_tag":"canonical_milestone","reviewer_id":"r1","evidence":"Included to satisfy topic coverage; strong citation centrality; has arXiv PDF."}
+{"paper_key":"openalex:https://openalex.org/W0000000002|title_sha256_12:deadbeefcafe","action":"include","reason_tag":"canonical_milestone","reviewer_id":"r1","evidence":"Canonical OpenAlex fallback form (use a real title hash in practice)."}
+{"paper_key":"doi:10.1234/abc.def","action":"exclude","reason_tag":"duplicate_or_retracted","reviewer_id":"r1","evidence":"Excluded due to duplication/retraction risk."}
+{"paper_key":"arXiv:2101.12345v2","action":"include","reason_tag":"high_impact_milestone","reviewer_id":"r1","evidence":"Included for historical relevance; arXiv version pin."}
+{"openalex_id":"https://openalex.org/W0000000003","title":"Example Title For Keying","action":"exclude","reason_tag":"off_topic","reviewer_id":"r1","evidence":"Keyed via openalex_id/title without providing paper_key."}
 

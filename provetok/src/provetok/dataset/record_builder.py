@@ -316,22 +316,31 @@ def build_record_v2_from_abstract(
         if llm is None:
             break
 
-        resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=1200)
-        try:
-            extracted = json.loads(resp.content.strip())
-            llm_parse_ok = isinstance(extracted, dict)
-        except Exception as e:
-            last_llm_error = f"json_parse:{type(e).__name__}"
+        if hasattr(llm, "structured_chat"):
+            resp = llm.structured_chat(
+                [{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=1200,
+            )
+        else:
+            resp = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=1200,
+            )
+        extracted = json.loads(resp.content.strip())
+        llm_parse_ok = isinstance(extracted, dict)
+
+        if not llm_parse_ok:
+            last_llm_error = "bad_json_root"
             logger.warning(
-                "LLM extraction failed for %s (attempt %d/%d)",
+                "LLM extraction returned non-object JSON for %s (attempt %d/%d)",
                 paper_id,
                 attempt + 1,
                 attempts,
             )
-            continue
-
-        if not llm_parse_ok:
-            last_llm_error = "bad_json_root"
+            extracted = {}
             continue
 
         if not strict_paraphrase:

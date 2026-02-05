@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import yaml
+
 
 @dataclass(frozen=True)
 class DatasetConfig:
@@ -24,11 +26,6 @@ class DatasetConfig:
 def load_dataset_config(path: Optional[Path]) -> DatasetConfig:
     if path is None:
         path = Path("provetok/configs/dataset.yaml")
-
-    try:
-        import yaml
-    except ImportError as e:  # pragma: no cover
-        raise ImportError("pyyaml is required: pip install pyyaml") from e
 
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}

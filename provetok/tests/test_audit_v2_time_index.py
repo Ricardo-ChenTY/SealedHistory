@@ -26,10 +26,11 @@ class _OracleLLM:
         idb = m_b.group(1) if m_b else ""
 
         def idx(pid: str) -> int:
-            try:
-                return int(pid.split("_", 1)[1])
-            except Exception:
+            parts = str(pid or "").split("_", 1)
+            if len(parts) != 2:
                 return 0
+            s = parts[1]
+            return int(s) if s.isdigit() else 0
 
         choice = "A" if idx(ida) <= idx(idb) else "B"
         return _Resp(choice)

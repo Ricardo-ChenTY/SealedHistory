@@ -5,11 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from provetok.dataset.selection import WorkCandidate, compute_selection_signals, select_works
+from provetok.dataset.selection import WorkCandidate, compute_paper_key, compute_selection_signals, select_works
 
 
 def _cand(oid: str, *, year: int, cited: int, refs=(), concepts=()):
     return WorkCandidate(
+        paper_key=compute_paper_key(doi=None, arxiv_id=None, openalex_id=oid, title=f"t-{oid}"),
         openalex_id=oid,
         title=f"t-{oid}",
         publication_year=year,

@@ -12,6 +12,7 @@ import logging
 import os
 import time
 import copy
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -25,6 +26,8 @@ from provetok.dataset.selection import (
     assign_local_ids,
     derive_dependency_closed_core_paper_ids,
     load_manual_decisions,
+    manual_lookup_keys,
+    match_manual_decision,
     parse_openalex_work,
     select_works,
 )
@@ -35,6 +38,22 @@ from provetok.sources.s2_client import S2Client, S2Config
 from provetok.utils.llm_client import LLMClient, LLMConfig
 
 logger = logging.getLogger(__name__)
+
+
+_INT_RE = re.compile(r"^[+-]?\d+$")
+
+
+def _parse_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    if _INT_RE.fullmatch(s):
+        return int(s)
+    return None
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -116,15 +135,18 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
     _write_json(paths.public_dir / "taxonomy.json", taxonomy)
 
     def _sha256_json(obj: Any) -> str:
-        try:
-            blob = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        except Exception:
-            blob = str(obj).encode("utf-8")
+        blob = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()
 
     sources_cfg = raw_cfg.get("sources") or {}
     oa_cfg_raw = sources_cfg.get("openalex") or {}
     s2_cfg_raw = sources_cfg.get("s2") or {}
+    oc_cfg_raw = (sources_cfg.get("opencitations") or {}) if isinstance(sources_cfg, dict) else {}
+    oc_enable = bool(oc_cfg_raw.get("enable", False))
+    oc_tiers_raw = oc_cfg_raw.get("tiers") or ["core"]
+    if not isinstance(oc_tiers_raw, list):
+        oc_tiers_raw = [oc_tiers_raw]
+    oc_tiers = [str(x) for x in oc_tiers_raw if x]
 
     openalex_cfg = OpenAlexConfig(
         base_url=str(oa_cfg_raw.get("base_url", "https://api.openalex.org")),
@@ -222,31 +244,36 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
 
     llm: Optional[LLMClient] = None
     if llm_mode == "llm":
-        api_key_env = str(rb.get("llm_api_key_env", "LLM_API_KEY"))
-        api_key = os.environ.get(api_key_env, "")
-        if not api_key:
+        if offline:
             if require_llm:
-                raise RuntimeError(
-                    f"record_build.require_llm=true but {api_key_env} is empty; set the env var to enable LLM record builds"
-                )
-            logger.info("LLM disabled: %s is empty; using deterministic fallbacks", api_key_env)
+                raise ValueError("offline mode is not compatible with record_build.require_llm=true")
+            logger.info("Offline mode: LLM disabled; using deterministic fallbacks")
         else:
-            candidate = LLMClient(
-                LLMConfig(
-                    model=str(rb.get("llm_model", "deepseek-chat")),
-                    api_base=str(rb.get("llm_api_base", "https://api.deepseek.com/v1")),
-                    api_key=api_key,
-                    temperature=0.0,
-                )
-            )
-            if not candidate.is_configured():
+            api_key_env = str(rb.get("llm_api_key_env", "LLM_API_KEY"))
+            api_key = os.environ.get(api_key_env, "")
+            if not api_key:
                 if require_llm:
                     raise RuntimeError(
-                        "record_build.require_llm=true but LLM client is not configured; ensure `openai` is installed and the API key is valid"
+                        f"record_build.require_llm=true but {api_key_env} is empty; set the env var to enable LLM record builds"
                     )
-                logger.warning("LLM client not configured; falling back to deterministic placeholders")
+                logger.info("LLM disabled: %s is empty; using deterministic fallbacks", api_key_env)
             else:
-                llm = candidate
+                candidate = LLMClient(
+                    LLMConfig(
+                        model=str(rb.get("llm_model", "deepseek-chat")),
+                        api_base=str(rb.get("llm_api_base", "https://api.deepseek.com/v1")),
+                        api_key=api_key,
+                        temperature=0.0,
+                    )
+                )
+                if not candidate.is_configured():
+                    if require_llm:
+                        raise RuntimeError(
+                            "record_build.require_llm=true but LLM client is not configured; ensure `openai` is installed and the API key is valid"
+                        )
+                    logger.warning("LLM client not configured; falling back to deterministic placeholders")
+                else:
+                    llm = candidate
     elif require_llm or strict_paraphrase:
         raise ValueError("record_build.require_llm/strict_paraphrase require record_build.mode=llm")
 
@@ -278,6 +305,20 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         works_snapshot_path = works_snapshot_dir / f"works_track_{t}.jsonl"
         works_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
+        oa_requests_path = works_snapshot_dir / f"requests_track_{t}.jsonl"
+        if not oa_requests_path.exists():
+            oa_requests_path.write_text("", encoding="utf-8")
+        elif not offline:
+            oa_requests_path.write_text("", encoding="utf-8")
+
+        if oc_enable:
+            oc_requests_path = paths.private_dir / "raw_snapshots" / "opencitations" / f"requests_track_{t}.jsonl"
+            oc_requests_path.parent.mkdir(parents=True, exist_ok=True)
+            if not oc_requests_path.exists():
+                oc_requests_path.write_text("", encoding="utf-8")
+            elif not offline:
+                oc_requests_path.write_text("", encoding="utf-8")
+
         works: List[Dict[str, Any]] = []
         if offline:
             if not works_snapshot_path.exists():
@@ -288,7 +329,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             # Truncate snapshot for deterministic reruns within the same export dir.
             works_snapshot_path.write_text("", encoding="utf-8")
             snap_log = SnapshotWriter(
-                paths.private_dir / "raw_snapshots" / "openalex" / f"requests_track_{t}.jsonl",
+                oa_requests_path,
                 "openalex",
             )
             client = OpenAlexClient(openalex_cfg, snapshot=snap_log)
@@ -305,13 +346,43 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             logger.warning("No OpenAlex candidates for track %s", t)
             continue
 
+        def manual_decision_for_candidate(cand: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+            return match_manual_decision(cand, manual_decisions)
+
+        # Manual excludes are applied at candidate filtering time; log them deterministically.
+        if manual_path:
+            for c in candidates:
+                matched_key, dec = manual_decision_for_candidate(c)
+                if not dec:
+                    continue
+                action = str(dec.get("action") or "").strip().lower()
+                if action != "exclude":
+                    continue
+                selection_rows_by_tier["extended"].append(
+                    {
+                        "ts_unix": int(time.time()),
+                        "track_id": t,
+                        "tier": "extended",
+                        "paper_key": c.paper_key,
+                        "openalex_id": c.openalex_id,
+                        "doi": c.doi,
+                        "arxiv_id": c.arxiv_id,
+                        "action": "exclude",
+                        "reason_tag": str(dec.get("reason_tag") or "manual_exclude"),
+                        "reviewer_id": str(dec.get("reviewer_id") or ""),
+                        "evidence": {
+                            "matched_key": matched_key,
+                            "manual_decisions_file": manual_path,
+                            "note": str(dec.get("evidence") or dec.get("note") or ""),
+                        },
+                    }
+                )
+
         pool_size = max(extended_size, int(round(extended_size * pool_mult)))
         pool_size = max(1, min(pool_size, len(candidates)))
 
-        oa_ref_year = None
-        try:
-            oa_ref_year = int(((cfg_t.get("openalex") or {}).get("year_to") or 0) or 0) or None
-        except Exception:
+        oa_ref_year = _parse_int(((cfg_t.get("openalex") or {}).get("year_to") or 0) or 0)
+        if oa_ref_year == 0:
             oa_ref_year = None
 
         selected_pool, selection_signals = select_works(
@@ -326,8 +397,44 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         )
         oa_to_pid = assign_local_ids(selected_pool, track_prefix=t)
 
+        # Manual includes are enforced in select_works; log the includes that made it into the pool.
+        if manual_path:
+            for c in selected_pool:
+                matched_key, dec = manual_decision_for_candidate(c)
+                if not dec:
+                    continue
+                action = str(dec.get("action") or "").strip().lower()
+                if action != "include":
+                    continue
+                selection_rows_by_tier["extended"].append(
+                    {
+                        "ts_unix": int(time.time()),
+                        "track_id": t,
+                        "tier": "extended",
+                        "paper_id": oa_to_pid.get(c.openalex_id),
+                        "paper_key": c.paper_key,
+                        "openalex_id": c.openalex_id,
+                        "doi": c.doi,
+                        "arxiv_id": c.arxiv_id,
+                        "action": "include",
+                        "reason_tag": str(dec.get("reason_tag") or "manual_include"),
+                        "reviewer_id": str(dec.get("reviewer_id") or ""),
+                        "evidence": {
+                            "matched_key": matched_key,
+                            "manual_decisions_file": manual_path,
+                            "note": str(dec.get("evidence") or dec.get("note") or ""),
+                        },
+                    }
+                )
+
         # Prepare S2 client for metadata enrichment (DOI/arXiv/openAccessPdf).
-        s2_snap = SnapshotWriter(paths.private_dir / "raw_snapshots" / "s2" / f"requests_track_{t}.jsonl", "s2")
+        s2_requests_path = paths.private_dir / "raw_snapshots" / "s2" / f"requests_track_{t}.jsonl"
+        s2_requests_path.parent.mkdir(parents=True, exist_ok=True)
+        if not s2_requests_path.exists():
+            s2_requests_path.write_text("", encoding="utf-8")
+        elif not offline:
+            s2_requests_path.write_text("", encoding="utf-8")
+        s2_snap = SnapshotWriter(s2_requests_path, "s2")
         s2 = S2Client(s2_cfg, snapshot=s2_snap)
 
         accepted_ext_rows: List[Dict[str, Any]] = []
@@ -358,6 +465,10 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                             "track_id": t,
                             "tier": "extended",
                             "paper_id": paper_id,
+                            "paper_key": row.get("paper_key"),
+                            "openalex_id": row.get("openalex_id"),
+                            "doi": row.get("doi"),
+                            "arxiv_id": row.get("arxiv_id"),
                             "action": "exclude",
                             "reason_tag": reason,
                             "evidence": {"fulltext_status": ft_status, "fulltext_error": row.get("fulltext_error")},
@@ -371,41 +482,27 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 title = str(row.get("title") or paper_id)
                 abstract = str(row.get("abstract") or "")
 
-                try:
-                    rec = build_record_v2_from_abstract(
-                        paper_id=paper_id,
-                        track_id=t,
-                        title=title,
-                        abstract=abstract,
-                        dependencies=deps,
-                        llm=llm,
-                        ids={
-                            "doi": row.get("doi"),
-                            "arxiv_id": row.get("arxiv_id"),
-                            "openalex_id": row.get("openalex_id"),
-                            "s2_id": row.get("s2_id"),
-                            "landing_page_url": row.get("landing_page_url"),
-                        },
-                        strict_paraphrase=strict_paraphrase,
-                        max_retries=max_retries,
-                        prompt_version=prompt_version or None,
-                        taxonomy=taxonomy,
-                        forbid_names=forbid_names,
-                        name_allowlist=[str(x) for x in name_allowlist if str(x).strip()],
-                    )
-                except RecordBuildError as e:
-                    selection_rows_by_tier["extended"].append(
-                        {
-                            "ts_unix": int(time.time()),
-                            "track_id": t,
-                            "tier": "extended",
-                            "paper_id": paper_id,
-                            "action": "exclude",
-                            "reason_tag": "exclude_record_build_failed",
-                            "evidence": {"code": e.code, "error": str(e)},
-                        }
-                    )
-                    continue
+                rec = build_record_v2_from_abstract(
+                    paper_id=paper_id,
+                    track_id=t,
+                    title=title,
+                    abstract=abstract,
+                    dependencies=deps,
+                    llm=llm,
+                    ids={
+                        "doi": row.get("doi"),
+                        "arxiv_id": row.get("arxiv_id"),
+                        "openalex_id": row.get("openalex_id"),
+                        "s2_id": row.get("s2_id"),
+                        "landing_page_url": row.get("landing_page_url"),
+                    },
+                    strict_paraphrase=strict_paraphrase,
+                    max_retries=max_retries,
+                    prompt_version=prompt_version or None,
+                    taxonomy=taxonomy,
+                    forbid_names=forbid_names,
+                    name_allowlist=[str(x) for x in name_allowlist if str(x).strip()],
+                )
 
                 # Best-effort: build formula_graph from arXiv sources (if available).
                 src_paths = list(row.get("source_paths") or [])
@@ -451,6 +548,10 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                         "track_id": t,
                         "tier": "extended",
                         "paper_id": paper_id,
+                        "paper_key": row.get("paper_key"),
+                        "openalex_id": row.get("openalex_id"),
+                        "doi": row.get("doi"),
+                        "arxiv_id": row.get("arxiv_id"),
                         "action": "include",
                         "reason_tag": "include_strict_fulltext_and_record_ok",
                         "evidence": {
@@ -481,15 +582,12 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             if not offline:
                 key = c.doi or (c.arxiv_id or "")
                 if key:
-                    try:
-                        s2_meta = s2.get_paper(key)
-                    except Exception:
-                        s2_meta = None
+                    s2_meta = s2.get_paper(key)
                 if not s2_meta and c.title:
-                    try:
-                        s2_meta = (s2.search(c.title, limit=1) or {}).get("data", [None])[0]
-                    except Exception:
-                        s2_meta = None
+                    search = s2.search(c.title, limit=1) or {}
+                    data = search.get("data") or []
+                    if isinstance(data, list) and data and isinstance(data[0], dict):
+                        s2_meta = data[0]
                 if s2_meta and isinstance(s2_meta, dict):
                     s2_meta_sha256 = _sha256_json(s2_meta)
 
@@ -522,6 +620,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             row = {
                 "tier": "extended",
                 "paper_id": paper_id,
+                "paper_key": c.paper_key,
                 "track_id": t,
                 "openalex_id": c.openalex_id,
                 "openalex_work_sha256": _sha256_json(c.raw),
@@ -623,13 +722,6 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             core_rows.append(rr)
 
         # Optional: enrich core with OpenCitations outgoing references (DOI->DOI).
-        oc_cfg_raw = (sources_cfg.get("opencitations") or {}) if isinstance(sources_cfg, dict) else {}
-        oc_enable = bool(oc_cfg_raw.get("enable", False))
-        oc_tiers_raw = oc_cfg_raw.get("tiers") or ["core"]
-        if not isinstance(oc_tiers_raw, list):
-            oc_tiers_raw = [oc_tiers_raw]
-        oc_tiers = [str(x) for x in oc_tiers_raw if x]
-
         if oc_enable and (not offline) and ("core" in oc_tiers):
             oc_snap = SnapshotWriter(
                 paths.private_dir / "raw_snapshots" / "opencitations" / f"requests_track_{t}.jsonl",
@@ -679,25 +771,36 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         _write_jsonl(paths.private_mapping_path(t, "core"), core_rows)
 
         # Core selection log (include + exclude-from-core for auditability).
+        meta_by_pid = {str(r.get("paper_id")): r for r in accepted_ext_rows if r.get("paper_id")}
         for pid in core_pids:
+            meta = meta_by_pid.get(pid) or {}
             selection_rows_by_tier["core"].append(
                 {
                     "ts_unix": int(time.time()),
                     "track_id": t,
                     "tier": "core",
                     "paper_id": pid,
+                    "paper_key": meta.get("paper_key"),
+                    "openalex_id": meta.get("openalex_id"),
+                    "doi": meta.get("doi"),
+                    "arxiv_id": meta.get("arxiv_id"),
                     "action": "include",
                     "reason_tag": "core_subset_from_extended",
                     "evidence": {"source_tier": "extended", "core_size": core_size},
                 }
             )
         for pid in sorted(accepted_pids - core_set):
+            meta = meta_by_pid.get(pid) or {}
             selection_rows_by_tier["core"].append(
                 {
                     "ts_unix": int(time.time()),
                     "track_id": t,
                     "tier": "core",
                     "paper_id": pid,
+                    "paper_key": meta.get("paper_key"),
+                    "openalex_id": meta.get("openalex_id"),
+                    "doi": meta.get("doi"),
+                    "arxiv_id": meta.get("arxiv_id"),
                     "action": "exclude",
                     "reason_tag": "exclude_not_in_core_subset",
                     "evidence": {"core_size": core_size},
@@ -738,6 +841,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     "tier": "extended",
                     "track_id": t,
                     "paper_id": row.get("paper_id"),
+                    "paper_key": row.get("paper_key"),
                     "openalex_id": row.get("openalex_id"),
                     "doi": row.get("doi"),
                     "arxiv_id": row.get("arxiv_id"),
@@ -758,6 +862,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     "tier": "core",
                     "track_id": t,
                     "paper_id": row.get("paper_id"),
+                    "paper_key": row.get("paper_key"),
                     "openalex_id": row.get("openalex_id"),
                     "doi": row.get("doi"),
                     "arxiv_id": row.get("arxiv_id"),

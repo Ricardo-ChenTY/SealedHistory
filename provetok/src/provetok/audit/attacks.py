@@ -110,13 +110,9 @@ class TermRecoveryAttack:
 
     @staticmethod
     def _parse_guesses(text: str) -> List[str]:
-        try:
-            parsed = json.loads(text.strip())
-            if isinstance(parsed, list):
-                return [str(g) for g in parsed[:5]]
-        except json.JSONDecodeError:
-            pass
-        return [text.strip()]
+        # Keep parsing deterministic and failure-transparent: treat the response as a plain string.
+        # Structured parsing (and any recovery) must be handled outside the repository code.
+        return [str(text or "").strip()]
 
 
 # ======================================================================
@@ -319,13 +315,11 @@ class OrderBiasTest:
     def _get_score(self, sequence_text: str) -> float:
         prompt = self.PROMPT_TEMPLATE.format(sequence=sequence_text)
         resp = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.0)
-        try:
-            return float(resp.content.strip())
-        except ValueError:
-            # try to extract first number
-            import re
-            nums = re.findall(r"\d+", resp.content)
-            return float(nums[0]) if nums else 5.0
+        import re
+        m = re.search(r"-?\d+(?:\.\d+)?", str(resp.content or ""))
+        if not m:
+            return 5.0
+        return float(m.group(0))
 
 
 # ======================================================================

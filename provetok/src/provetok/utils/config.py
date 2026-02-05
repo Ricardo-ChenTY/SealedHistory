@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import yaml
+
 
 @dataclass
 class SDGConfig:
@@ -72,11 +74,6 @@ def load_config(path: Optional[Path] = None) -> ProjectConfig:
 
     if path is None or not path.exists():
         return cfg
-
-    try:
-        import yaml
-    except ImportError:
-        raise ImportError("pyyaml is required to load config files: pip install pyyaml")
 
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}

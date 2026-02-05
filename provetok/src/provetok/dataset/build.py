@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -10,6 +12,22 @@ from typing import Any, Dict, List, Optional
 
 from provetok.dataset.config import load_dataset_config
 from provetok.dataset.paths import DatasetPaths
+
+
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+
+
+def _parse_float(value: Any, *, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return default
+    if _FLOAT_RE.fullmatch(s):
+        return float(s)
+    return default
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -54,10 +72,7 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
             line = line.strip()
             if not line:
                 continue
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
+            row = json.loads(line)
             n += 1
 
             abs_len = len(str(row.get("abstract") or "").strip())
@@ -69,10 +84,7 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
                 has_fulltext += 1
 
             conf = row.get("confidence_score")
-            try:
-                conf_f = float(conf) if conf is not None else 0.0
-            except Exception:
-                conf_f = 0.0
+            conf_f = _parse_float(conf, default=0.0)
             scores.append(conf_f)
 
         all_scores.extend(scores)
@@ -134,10 +146,7 @@ def _compute_formula_graph_summary(paths: DatasetPaths, *, track: str, tier: str
             line = line.strip()
             if not line:
                 continue
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
+            row = json.loads(line)
 
             counts["n_rows"] += 1
             overall["n_rows"] += 1
@@ -167,26 +176,25 @@ def _compute_formula_graph_summary(paths: DatasetPaths, *, track: str, tier: str
 
 
 def _git_metadata() -> Dict[str, Any]:
-    """Best-effort git metadata for reproducible manifests."""
-    try:
-        top = (
-            subprocess.check_output(["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL)
-            .decode("utf-8")
-            .strip()
-        )
-        commit = (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=top, stderr=subprocess.DEVNULL)
-            .decode("utf-8")
-            .strip()
-        )
-        dirty = bool(
-            subprocess.check_output(["git", "status", "--porcelain"], cwd=top, stderr=subprocess.DEVNULL)
-            .decode("utf-8")
-            .strip()
-        )
-        return {"git_commit": commit, "git_dirty": dirty}
-    except Exception:
+    git = shutil.which("git")
+    if not git:
         return {}
+
+    top_p = subprocess.run([git, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top_p.returncode != 0:
+        return {}
+    top = top_p.stdout.strip()
+    if not top:
+        return {}
+
+    commit_p = subprocess.run([git, "rev-parse", "HEAD"], cwd=top, capture_output=True, text=True)
+    if commit_p.returncode != 0:
+        return {}
+    commit = commit_p.stdout.strip()
+
+    dirty_p = subprocess.run([git, "status", "--porcelain"], cwd=top, capture_output=True, text=True)
+    dirty = bool(dirty_p.stdout.strip()) if dirty_p.returncode == 0 else False
+    return {"git_commit": commit, "git_dirty": dirty}
 
 
 def _count_jsonl(path: Path) -> int:
@@ -203,10 +211,7 @@ def _selection_exclusion_breakdown(selection_log_path: Path, *, track_id: Option
         line = line.strip()
         if not line:
             continue
-        try:
-            row = json.loads(line)
-        except Exception:
-            continue
+        row = json.loads(line)
         if track_id and str(row.get("track_id") or "") != track_id:
             continue
         if str(row.get("action") or "") != "exclude":

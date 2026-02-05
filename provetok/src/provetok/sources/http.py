@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,39 +93,22 @@ def http_get(
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 60,
     limiter: Optional[RateLimiter] = None,
-    retries: int = 3,
+    retries: int = 1,  # kept for backwards compatibility; no in-code recovery in this repo
 ) -> HttpResponse:
     headers = headers or {}
     req = urllib.request.Request(url, headers=headers)
 
-    last_err: Optional[BaseException] = None
-    for attempt in range(retries):
-        if limiter is not None:
-            limiter.wait()
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = resp.read()
-                return HttpResponse(
-                    url=url,
-                    status=int(getattr(resp, "status", 200)),
-                    headers={k.lower(): v for k, v in resp.headers.items()},
-                    body=body,
-                )
-        except urllib.error.HTTPError as e:
-            last_err = e
-            # Rate limited or transient server errors: retry with backoff
-            if e.code in (429, 500, 502, 503, 504):
-                time.sleep(2 ** attempt)
-                continue
-            raise
-        except Exception as e:  # pragma: no cover
-            last_err = e
-            time.sleep(2 ** attempt)
-            continue
+    if limiter is not None:
+        limiter.wait()
 
-    if last_err is not None:  # pragma: no cover
-        raise last_err
-    raise RuntimeError("http_get failed without exception")  # pragma: no cover
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read()
+        return HttpResponse(
+            url=url,
+            status=int(getattr(resp, "status", 200)),
+            headers={k.lower(): v for k, v in resp.headers.items()},
+            body=body,
+        )
 
 
 def safe_headers(headers: Dict[str, str]) -> Dict[str, str]:

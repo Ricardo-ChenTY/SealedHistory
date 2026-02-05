@@ -143,10 +143,11 @@ class TimeIndexPairwiseAttackV2:
     @staticmethod
     def _paper_index(paper_id: str) -> int:
         s = str(paper_id or "")
-        try:
-            return int(s.split("_", 1)[1])
-        except Exception:
+        parts = s.split("_", 1)
+        if len(parts) != 2:
             return 0
+        tail = parts[1]
+        return int(tail) if tail.isdigit() else 0
 
     @staticmethod
     def _parse_choice(text: str) -> str:
@@ -221,19 +222,12 @@ def summary(results: Dict[str, AttackResult]) -> Dict[str, Any]:
 
 
 def _parse_json_list(text: str) -> List[str]:
-    try:
-        v = json.loads(text.strip())
-        if isinstance(v, list):
-            return [str(x) for x in v[:5]]
-    except Exception:
-        pass
-    return [text.strip()]
+    return [str(text or "").strip()]
 
 
 def _get_score(llm: LLMClient, prompt: str) -> float:
     resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.0, max_tokens=50)
-    try:
-        return float(resp.content.strip())
-    except Exception:
-        nums = re.findall(r"\d+", resp.content)
-        return float(nums[0]) if nums else 5.0
+    m = re.search(r"-?\d+(?:\.\d+)?", str(resp.content or ""))
+    if not m:
+        return 5.0
+    return float(m.group(0))

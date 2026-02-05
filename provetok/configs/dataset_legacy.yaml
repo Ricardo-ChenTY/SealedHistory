@@ -1,0 +1,48 @@
+dataset_version: "0.2.0-legacy"
+
+# Default export root for offline smoke builds (overridable via CLI `--out`).
+export_root: "runs/exports"
+
+tracks:
+  A:
+    name: "vision"
+    core_size: 120
+    extended_size: 2000
+    openalex:
+      concepts: []
+      keywords: []
+      venues: []
+      year_from: 2009
+      year_to: 2025
+  B:
+    name: "sequence_modeling"
+    core_size: 120
+    extended_size: 2000
+    openalex:
+      concepts: []
+      keywords: []
+      venues: []
+      year_from: 2009
+      year_to: 2025
+
+# Legacy/offline mode: uses local curated micro_history_{a,b}.jsonl (no network).
+record_build:
+  mode: "legacy_milestones"
+  require_llm: false
+  strict_paraphrase: false
+
+sdg:
+  enable_l1: true
+  enable_l2: true
+  enable_l3: true
+
+qa:
+  edge_coverage_threshold: 0.0
+  schema_pass_rate_required: 1.0
+  consistency_pass_rate_required: 0.95
+  taxonomy_other_ratio_max_core: 1.0
+
+seeds:
+  public_seeds: [42]
+  private_seeds: []
+

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,21 @@ from provetok.data.schema import PaperRecord, ExperimentResult, save_records
 from provetok.utils.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
+
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+
+
+def _parse_float(value: Any, *, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return default
+    if _FLOAT_RE.fullmatch(s):
+        return float(s)
+    return default
 
 # ======================================================================
 # Semantic Scholar API client (no auth required for basic fields)
@@ -61,43 +77,28 @@ def search_paper_by_title(title: str, api_key: Optional[str] = None) -> Optional
     """Search for a paper by title, return best match."""
     query = urllib.parse.quote(title)
     url = f"{S2_API_BASE}/paper/search?query={query}&limit=1&fields={S2_FIELDS}"
-    try:
-        data = _http_get(url, api_key)
-        if data and data.get("data"):
-            return _parse_s2_paper(data["data"][0])
-    except Exception as e:
-        logger.error("Search failed for '%s': %s", title, e)
+    data = _http_get(url, api_key)
+    if data and data.get("data"):
+        return _parse_s2_paper(data["data"][0])
     return None
 
 
 def _fetch(url: str, api_key: Optional[str] = None) -> Optional[S2Paper]:
-    try:
-        data = _http_get(url, api_key)
-        if data:
-            return _parse_s2_paper(data)
-    except Exception as e:
-        logger.error("Fetch failed: %s", e)
+    data = _http_get(url, api_key)
+    if data:
+        return _parse_s2_paper(data)
     return None
 
 
 def _http_get(url: str, api_key: Optional[str] = None) -> Optional[dict]:
-    """Simple HTTP GET with rate-limit retry."""
+    """Simple HTTP GET."""
     headers = {"User-Agent": "ProveTok/0.1"}
     if api_key:
         headers["x-api-key"] = api_key
 
     req = urllib.request.Request(url, headers=headers)
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                wait = 2 ** (attempt + 1)
-                logger.warning("Rate limited, waiting %ds...", wait)
-                time.sleep(wait)
-            else:
-                raise
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
     return None
 
 
@@ -173,45 +174,47 @@ def extract_record_with_llm(
         abstract=s2_paper.abstract[:2000],
     )
 
-    resp = llm.chat(
+    resp = llm.structured_chat(
         [{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
         temperature=0.0,
         max_tokens=1024,
     )
 
-    try:
-        text = resp.content.strip()
-        # Handle markdown code blocks
-        if "```" in text:
-            start = text.index("```") + 3
-            if text[start:start + 4] == "json":
-                start += 4
-            end = text.index("```", start)
-            text = text[start:end].strip()
+    text = resp.content.strip()
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 3:
+            code = parts[1].lstrip()
+            if code.startswith("json"):
+                code = code[4:]
+            text = code.strip()
 
-        data = json.loads(text)
-
-        return PaperRecord(
-            paper_id=local_id,
-            title=s2_paper.title,
-            phase=data.get("phase", "mid"),
-            background=data.get("background", ""),
-            mechanism=data.get("mechanism", ""),
-            experiment=data.get("experiment", ""),
-            results=ExperimentResult(
-                metric_main=float(data.get("results_metric_main", 0.0)),
-                delta_vs_prev=float(data.get("results_delta_vs_prev", 0.0)),
-            ),
-            dependencies=dependencies,
-            keywords=data.get("keywords", []),
-            year=s2_paper.year,
-            venue=s2_paper.venue,
-            authors=[a for a in s2_paper.authors[:3]],  # keep top 3
-        )
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.error("Failed to parse LLM output for '%s': %s", s2_paper.title, e)
-        logger.debug("Raw LLM output: %s", resp.content[:500])
+    data = json.loads(text)
+    if not isinstance(data, dict):
         return None
+
+    keywords = data.get("keywords", [])
+    if not isinstance(keywords, list):
+        keywords = []
+
+    return PaperRecord(
+        paper_id=local_id,
+        title=s2_paper.title,
+        phase=str(data.get("phase", "mid") or "mid"),
+        background=str(data.get("background", "") or ""),
+        mechanism=str(data.get("mechanism", "") or ""),
+        experiment=str(data.get("experiment", "") or ""),
+        results=ExperimentResult(
+            metric_main=_parse_float(data.get("results_metric_main", 0.0), default=0.0),
+            delta_vs_prev=_parse_float(data.get("results_delta_vs_prev", 0.0), default=0.0),
+        ),
+        dependencies=dependencies,
+        keywords=[str(k).strip() for k in keywords if str(k).strip()],
+        year=s2_paper.year,
+        venue=s2_paper.venue,
+        authors=[a for a in s2_paper.authors[:3]],  # keep top 3
+    )
 
 
 # ======================================================================

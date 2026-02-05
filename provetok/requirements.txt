@@ -8,3 +8,4 @@ numpy>=1.24
 
 # Dev / testing
 pytest>=7.0
+jsonschema>=4.0

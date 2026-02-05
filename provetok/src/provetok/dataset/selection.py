@@ -6,18 +6,192 @@ fixtures and does not require network access.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import heapq
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+import yaml
+
 logger = logging.getLogger(__name__)
+
+
+_INT_RE = re.compile(r"^[+-]?\d+$")
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
+_ARXIV_NEW_RE = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
+_ARXIV_OLD_RE = re.compile(r"^[a-z\-]+(?:\.[a-z\-]+)?/\d{7}(?:v\d+)?$", re.IGNORECASE)
+
+
+def _parse_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    if _INT_RE.fullmatch(s):
+        return int(s)
+    return None
+
+
+def _parse_float(value: Any, *, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return default
+    if _FLOAT_RE.fullmatch(s):
+        return float(s)
+    return default
+
+
+def normalize_doi(doi: Any) -> str:
+    s = str(doi or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    for prefix in ("https://doi.org/", "http://doi.org/"):
+        if low.startswith(prefix):
+            s = s[len(prefix) :]
+            break
+    low = s.lower()
+    if low.startswith("doi:"):
+        s = s[4:]
+    return str(s).strip().lower()
+
+
+def looks_like_doi(doi: Any) -> bool:
+    s = normalize_doi(doi)
+    if not s:
+        return False
+    return bool(_DOI_RE.fullmatch(s))
+
+
+def normalize_arxiv_id(arxiv_id: Any) -> str:
+    s = str(arxiv_id or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if low.startswith("arxiv:"):
+        s = s[6:]
+    s = str(s).strip().lower()
+    return s
+
+
+def looks_like_arxiv_id(arxiv_id: Any) -> bool:
+    s = normalize_arxiv_id(arxiv_id)
+    if not s:
+        return False
+    return bool(_ARXIV_NEW_RE.fullmatch(s) or _ARXIV_OLD_RE.fullmatch(s))
+
+
+def normalize_openalex_id(openalex_id: Any) -> str:
+    s = str(openalex_id or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if low.startswith("http://openalex.org/"):
+        s = "https://openalex.org/" + s.split("/")[-1]
+    if low.startswith("https://openalex.org/"):
+        return s
+    if s.startswith("W"):
+        return f"https://openalex.org/{s}"
+    return s
+
+
+def title_sha256_12(title: Any) -> str:
+    s = str(title or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    h = hashlib.sha256(s.encode("utf-8")).hexdigest()
+    return h[:12]
+
+
+def compute_paper_key(
+    *,
+    doi: Any,
+    arxiv_id: Any,
+    openalex_id: Any,
+    title: Any,
+) -> str:
+    if looks_like_doi(doi):
+        return f"doi:{normalize_doi(doi)}"
+
+    if looks_like_arxiv_id(arxiv_id):
+        return f"arxiv:{normalize_arxiv_id(arxiv_id)}"
+
+    oa_norm = normalize_openalex_id(openalex_id)
+    if not oa_norm:
+        return "openalex:unknown|title_sha256_12:" + title_sha256_12(title)
+
+    return f"openalex:{oa_norm}|title_sha256_12:{title_sha256_12(title)}"
+
+
+def manual_lookup_keys(candidate: "WorkCandidate") -> List[str]:
+    keys = [candidate.paper_key]
+
+    doi_norm = normalize_doi(candidate.doi)
+    if doi_norm:
+        keys.append(f"doi:{doi_norm}")
+        keys.append(doi_norm)
+        keys.append(str(candidate.doi))
+
+    arxiv_norm = normalize_arxiv_id(candidate.arxiv_id)
+    if arxiv_norm:
+        keys.append(f"arxiv:{arxiv_norm}")
+        keys.append(arxiv_norm)
+        keys.append(str(candidate.arxiv_id))
+
+    oa_norm = normalize_openalex_id(candidate.openalex_id)
+    if oa_norm:
+        keys.append(f"openalex:{oa_norm}")
+        keys.append(oa_norm)
+
+    # Also accept the un-hashed prefix for openalex fallback keys.
+    if candidate.paper_key.startswith("openalex:") and "|title_sha256_12:" in candidate.paper_key:
+        keys.append(candidate.paper_key.split("|title_sha256_12:", 1)[0])
+
+    return [str(k) for k in keys if str(k).strip()]
+
+
+def match_manual_decision(
+    candidate: "WorkCandidate",
+    decisions: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    if not decisions:
+        return None, None
+
+    matches: List[str] = []
+    for k in manual_lookup_keys(candidate):
+        if k in decisions:
+            matches.append(k)
+
+    if not matches:
+        return None, None
+
+    actions: Set[str] = set()
+    for k in matches:
+        dec = decisions.get(k) or {}
+        a = str(dec.get("action") or "").strip().lower()
+        if a:
+            actions.add(a)
+    if len(actions) > 1:
+        raise ValueError(f"Conflicting manual decisions for {candidate.paper_key}: keys={matches}")
+
+    k0 = matches[0]
+    return k0, decisions.get(k0)
 
 
 @dataclass(frozen=True)
 class WorkCandidate:
+    paper_key: str
     openalex_id: str
     title: str
     publication_year: Optional[int]
@@ -33,10 +207,7 @@ def parse_openalex_work(w: Dict[str, Any]) -> WorkCandidate:
     oa_id = str(w.get("id", ""))
     title = str(w.get("title", ""))
     year = w.get("publication_year")
-    try:
-        year_int = int(year) if year is not None else None
-    except Exception:
-        year_int = None
+    year_int = _parse_int(year)
 
     doi = w.get("doi") or None
     cited_by = int(w.get("cited_by_count", 0) or 0)
@@ -54,6 +225,12 @@ def parse_openalex_work(w: Dict[str, Any]) -> WorkCandidate:
         arxiv_id = ids.get("arxiv_id") or None
 
     return WorkCandidate(
+        paper_key=compute_paper_key(
+            doi=doi,
+            arxiv_id=arxiv_id,
+            openalex_id=oa_id,
+            title=title,
+        ),
         openalex_id=oa_id,
         title=title,
         publication_year=year_int,
@@ -226,10 +403,6 @@ def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
         raise FileNotFoundError(path)
 
     if path.suffix.lower() in (".yaml", ".yml"):
-        try:
-            import yaml
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("pyyaml is required: pip install pyyaml") from e
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
         if isinstance(raw, dict):
             raw = raw.get("decisions") or []
@@ -242,11 +415,53 @@ def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
                 raw.append(json.loads(line))
 
     decisions: Dict[str, Dict[str, Any]] = {}
-    for d in raw:
-        key = str(d.get("paper_key") or d.get("openalex_id") or d.get("doi") or "")
+    for idx, d in enumerate(raw):
+        if not isinstance(d, dict):
+            raise ValueError(f"manual decision row {idx} is not an object: {type(d).__name__}")
+
+        dd = dict(d)
+        action = str(dd.get("action") or "").strip().lower()
+        if action not in ("include", "exclude"):
+            raise ValueError(f"manual decision row {idx} has invalid action: {dd.get('action')}")
+
+        reason_tag = str(dd.get("reason_tag") or "").strip()
+        reviewer_id = str(dd.get("reviewer_id") or "").strip()
+        if not reason_tag:
+            raise ValueError(f"manual decision row {idx} missing reason_tag")
+        if not reviewer_id:
+            raise ValueError(f"manual decision row {idx} missing reviewer_id")
+
+        raw_key = str(dd.get("paper_key") or "").strip()
+        openalex_id = dd.get("openalex_id") or ""
+        doi = dd.get("doi") or ""
+        arxiv_id = dd.get("arxiv_id") or ""
+        title = dd.get("title") or ""
+
+        if not raw_key and not str(openalex_id).strip() and not str(doi).strip() and not str(arxiv_id).strip():
+            raise ValueError(f"manual decision row {idx} missing paper_key/openalex_id/doi/arxiv_id")
+
+        key = ""
+        if raw_key:
+            raw_key_stripped = raw_key.strip()
+            if raw_key_stripped.startswith("doi:") or looks_like_doi(raw_key_stripped):
+                key = "doi:" + normalize_doi(raw_key_stripped)
+            elif raw_key_stripped.startswith("arxiv:") or looks_like_arxiv_id(raw_key_stripped):
+                key = "arxiv:" + normalize_arxiv_id(raw_key_stripped)
+            elif raw_key_stripped.startswith("openalex:"):
+                key = raw_key_stripped
+            else:
+                oa_norm = normalize_openalex_id(raw_key_stripped)
+                if oa_norm.startswith("https://openalex.org/"):
+                    key = "openalex:" + oa_norm
+
         if not key:
-            continue
-        decisions[key] = dict(d)
+            key = compute_paper_key(doi=doi, arxiv_id=arxiv_id, openalex_id=openalex_id, title=title)
+
+        if not key:
+            raise ValueError(f"manual decision row {idx} missing paper_key fields")
+
+        dd["paper_key"] = key
+        decisions[key] = dd
     return decisions
 
 
@@ -283,8 +498,8 @@ def select_works(
     # Apply hard excludes
     filtered: List[WorkCandidate] = []
     for c in candidates:
-        dec = manual_decisions.get(c.openalex_id) or manual_decisions.get(c.doi or "")
-        if dec and str(dec.get("action")).lower() == "exclude":
+        _, dec = match_manual_decision(c, manual_decisions)
+        if dec and str(dec.get("action") or "").strip().lower() == "exclude":
             continue
         filtered.append(c)
 
@@ -324,10 +539,12 @@ def select_works(
         k for k, d in manual_decisions.items() if str(d.get("action")).lower() == "include"
     ]
     if force_include_keys:
-        by_id = {c.openalex_id: c for c in filtered}
-        by_doi = {c.doi: c for c in filtered if c.doi}
+        by_key: Dict[str, WorkCandidate] = {}
+        for c in filtered:
+            for k in manual_lookup_keys(c):
+                by_key[k] = c
         for key in force_include_keys:
-            c = by_id.get(key) or by_doi.get(key)
+            c = by_key.get(key)
             if c and c not in selected:
                 selected.append(c)
                 if len(selected) >= target_max:
@@ -438,16 +655,11 @@ def derive_dependency_closed_core_paper_ids(
     def priority(pid: str) -> Tuple[Any, ...]:
         row = meta_by_pid.get(pid) or {}
         conf = row.get("confidence_score")
-        try:
-            conf_f = float(conf) if conf is not None else 0.0
-        except Exception:
-            conf_f = 0.0
+        conf_f = _parse_float(conf, default=0.0)
         cited = int(row.get("cited_by_count", 0) or 0)
         year = row.get("year")
-        try:
-            year_i = int(year) if year is not None else 10**9
-        except Exception:
-            year_i = 10**9
+        year_i = _parse_int(year) if year is not None else None
+        year_i = year_i if year_i is not None else 10**9
         has_ft = bool(row.get("pdf_sha256")) or bool(row.get("source_paths") or [])
         # heapq is min-first; smaller is earlier
         return (0 if has_ft else 1, -conf_f, -cited, year_i, pid)

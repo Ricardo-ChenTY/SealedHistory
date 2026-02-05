@@ -204,14 +204,10 @@ def run_qa(
         pwc_enabled = bool(pwc_cfg.get("enable", False))
         pwc_dump_path = str(pwc_cfg.get("dump_path") or "")
         if pwc_enabled and pwc_dump_path:
-            try:
-                from provetok.sources.pwc_dump import load_pwc_dump, normalize_doi
+            from provetok.sources.pwc_dump import load_pwc_dump, normalize_doi
 
-                pwc_hints = load_pwc_dump(Path(pwc_dump_path))
-                # normalize keys defensively
-                pwc_hints = {normalize_doi(k): v for k, v in pwc_hints.items() if k}
-            except Exception:
-                pwc_hints = {}
+            pwc_hints = load_pwc_dump(Path(pwc_dump_path))
+            pwc_hints = {normalize_doi(k): v for k, v in pwc_hints.items() if k}
 
     qa_rows: List[Dict[str, Any]] = []
     schema_pass = 0

@@ -41,6 +41,8 @@
 * `sdg_configs/`：SDG 参数配置（L1/L2/L3 开关与强度）。
 * `sealed_worlds/{seed}/core/...`, `sealed_worlds/{seed}/extended/...`：多 seed 的 sealed worlds（仅 sealed token + 变换后结构化对象）。
 * `attack_suite/`：泄漏审计脚本与报告模板（term recovery / time index / canonical-order test 等）。
+  * Implementation note（当前实现）：导出时 `public/attack_suite/` 主要生成 README 指引；可运行脚本位于仓库 `provetok/scripts/run_audit_v2.py`。
+  * 决议（2026-02-05）：导出物不要求自包含脚本；以 README 指向仓库脚本作为交付标准。
 
 ### 2.2 内部交付（Private / Leaderboard）
 
@@ -135,10 +137,20 @@
 * 固定输出版本号：`dataset_version`（语义化版本 + git commit）。
 * 定义 ID 归一化策略：优先 DOI / arXiv_id；无 DOI 时采用 OpenAlex work_id + title hash 组合键。
 
+> **Implementation note（当前实现）**
+> - 在线管线当前采用构建内局部 `paper_id = {track}_{i:03d}`（如 `A_001`），由候选排序后顺序分配。
+> - DOI/arXiv/OpenAlex/S2 的对齐主要落在 `private/mapping_key/paper_id_map_track_{A,B}_{core,extended}.jsonl`，尚未形成 plan 所述的“统一 paper key（OpenAlex+title-hash）”机制。
+>
+> TODO：Missing-023
+
 ### Phase 1：候选 works 集合抓取（OpenAlex 主、S2/OpenCitations 交叉）
 
 * 从 OpenAlex 拉取候选 work 子集（按 concept、关键词、venue、年份 filter）。([OpenAlex][1])
-* 为候选 work 生成 `raw_works_snapshot.jsonl`（包含抓取时间、API query、分页信息）。
+* 为候选 works 保存 raw snapshots（用于离线复现与审计；规范采用 works 与 requests 分离）：
+
+  * `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`：逐行保存 OpenAlex work 对象（`results[]`）。
+  * `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`：保存每次请求的 query/cursor/分页 + 响应哈希/长度/预览等元信息（含 `ts_unix`）。
+  * `private/raw_snapshots/s2/requests_track_{A,B}.jsonl`：保存 S2 enrichment/search 请求元信息（若启用）。
 * 用 Semantic Scholar API 交叉拉取关键字段（DOI/arXiv_id/venue/引用）。([Semantic Scholar][2])
 * （可选）用 OpenCitations 对 DOI-to-DOI 引文边做第三方校验。([OpenCitations][5])
 
@@ -154,12 +166,13 @@
 
 **自动化候选排序（可复现）**
 
-* 对候选图计算：
+* 对候选图计算（可复现、确定性）：
 
-  * 中心性（PageRank/betweenness 等）
-  * 引用突增（burst / growth）
-  * 跨社区桥接（community detection 后跨社区边）
+  * 中心性：PageRank / indegree（已实现）
+  * 引用突增：`citation_velocity`（citations-per-year 的 proxy，已实现）
+  * 跨社区桥接：`bridge`（以 OpenAlex concept 作为 community proxy 的跨社区邻居比率，已实现）
 * 覆盖约束：确保每条 track 覆盖 ≥K 个子主题（基于 OpenAlex concept 或自定义 taxonomy）。([OpenAlex][1])
+* Implementation note（当前实现）：选择信号会以 `selection_signals` 形式写入 selection log 的 evidence，用于复现排序证据。
 
 **人工裁剪（可审计）**
 
@@ -168,6 +181,7 @@
   * `reason_tag`：重复/纯工程/不可访问全文/无清晰实验协议/偏离 track
   * `reviewer_id`：内部标注者编号
   * `evidence`：触发规则的说明
+* Implementation note（当前实现）：`manual_decisions_file` 的 include/exclude 会写入 `public/selection_log_extended.jsonl`，并包含 `reviewer_id`/`reason_tag`/`paper_key` 以满足可审计性。
 * 输出最终 `track_A_papers.jsonl`, `track_B_papers.jsonl`（含 work_id、doi、arxiv_id、抓取时间戳）。
 
 ### Phase 4：论文可访问性与全文获取（仅内部解析）
@@ -197,6 +211,11 @@
   * 代码开源（GitHub 可获取）、依赖可装、数据可下载、训练可轻量；
   * 复现失败不影响数据集主体发布，只影响“现实对齐”附录指标。
 
+> **Implementation note（当前实现）**
+> - 当前仓库尚未实现 GitHub 侧的 real-mode 子集采集/落盘（repo URL、commit hash、license/README 协议摘要等），也未定义 real-mode 子集的结构化导出文件。
+>
+> TODO：Missing-025
+
 ---
 
 ## 7. SDG 输入对齐与 sealed worlds 产出
@@ -211,6 +230,12 @@
 * 每个 seed：生成一份 codebook + 对 records 执行 L1/L2/L3（按 config）。
 * 公开 seeds：用于复现实验与社区对比。
 * 隐藏 seeds：用于长期 leaderboard，定期轮换，降低未来污染。
+
+> **Implementation note（当前实现）**
+> - 数据集导出时，sealed worlds 写入 `public/sealed_worlds/{seed}/...`（公开 seeds），但 codebook 映射始终写入 `private/mapping_key/seed_{seed}.codebook.json`（不随 public 发布）。
+> - 仓库内包含演示用 `provetok/data/sealed/*.codebook.json`（用于 sample micro-history）。
+>
+> **Ambiguity（Amb-006）**：演示用 codebook 是否允许随仓库公开？若允许，需要明确其为合成示例且不对应真实论文术语；否则需移除/改为运行时生成。
 
 ---
 
@@ -243,7 +268,11 @@
 ### 9.1 可复现原则
 
 * 所有抓取都记录：query、时间戳、分页、API 版本（若可得）、原始响应哈希。
-* Track 选择输出可从 `raw_works_snapshot + selection_log` 复现。
+* Track 选择输出可从 raw snapshots + selection log 复现（当前实现文件如下；若要统一为单文件 snapshot 见 Amb-004）：
+
+  * `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
+  * `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`
+  * `public/selection_log_{core,extended}.jsonl`
 * records 生成流程固定：schema + 规则 + 标注指南版本号（写入 `dataset_manifest.json`）。
 
 ### 9.2 存储策略（建议）
@@ -260,6 +289,7 @@
 
    * 主图谱用 OpenAlex（可 API + 可 snapshot），并交叉使用 S2；PWC 只用 GitHub dumps。([OpenAlex][1])
    * 调用遵循 S2 许可与 rate limit，不做规避；必要时申请 key 并本地缓存。([Semantic Scholar][3])
+   * Implementation note（当前实现）：离线兜底依赖已有 `private/raw_snapshots/openalex/*` 快照；若首次构建时 OpenAlex 不可用，当前没有替代候选发现通路（TODO：Missing-024）。
 
 2. **论文不在 arXiv / 全文不可得**
 
@@ -285,6 +315,84 @@
 3. 依赖图边覆盖率达到预设阈值（例如：与 OpenAlex/S2 引文边重合率/一致率达标），并在 `manifest` 中报告。
 4. 至少生成 ≥M 个公开 seeds 的 sealed worlds，并能用同一 SDG 配置一键复现。
 5. 所有公开包包含 `manifest`、hash、统计摘要与已知问题列表。
+
+---
+
+## 12. 当前实现对齐与差距（Backlog，as of 2026-02-05）
+
+> 说明：本节将 `plan.md` 的承诺与当前仓库实现的差距显式化，便于对外披露与内部迭代。每条 item 必须可检查：Source / Impact scope / Acceptance / Verification。
+
+### 12.1 Gap（not implemented）
+
+- [x] Missing-021: 记录人工裁剪事件到 `selection_log_extended.jsonl`（含 `reviewer_id`）
+  - Source: §5 Phase 3「人工裁剪（可审计）」
+  - Impact scope: `public/selection_log_{core,extended}.jsonl` 的可审计性与可复现性；人工决策闭环
+  - Location: `provetok/src/provetok/dataset/selection.py`, `provetok/src/provetok/dataset/pipeline.py`, `docs/templates/manual_decisions.jsonl`
+  - Acceptance:
+    - `manual_decisions_file` 输入可携带 `reviewer_id`（或明确其匿名化/存放层级策略）
+    - 人工 include/exclude 生效时，`public/selection_log_extended.jsonl` 追加对应事件（`action`/`reason_tag`/`evidence`/`reviewer_id`/`paper_key`）
+  - Verification:
+    - 单测：`python -m pytest -q`（覆盖 manual decisions 的 log 落盘）
+    - 集成：跑一次 `python -m provetok.cli dataset build --config provetok/configs/dataset.yaml` 后检查导出目录 `public/selection_log_*.jsonl`
+
+- [x] Missing-022: 明确降级为当前 proxy（不实现 betweenness/community detection）
+  - Source: §5 Phase 3「自动化候选排序（可复现）」中对 betweenness / community detection 的描述
+  - Impact scope: selection 信号口径与论文/开源描述一致性；排序证据的可解释性
+  - Location: `provetok/src/provetok/dataset/selection.py`, `plan.md`
+  - Acceptance：
+    - 文档：在 `plan.md` 明确当前只提供 proxy（`pagerank`/`indegree`/`citation_velocity`/`bridge` 基于 concept proxy），并解释局限
+  - Verification:
+    - `python -m pytest -q`（selection 信号稳定输出）
+    - 构建后检查 `public/selection_log_extended.jsonl` evidence 中的 `selection_signals`
+
+- [x] Missing-023: 统一 ID 归一化 key（`paper_key`）
+  - Source: §5 Phase 0「定义 ID 归一化策略」
+  - Impact scope: 去重/对齐稳定性；跨重跑一致性；manual decisions 的 key 策略
+  - Location: `provetok/src/provetok/dataset/selection.py`, `provetok/src/provetok/dataset/pipeline.py`, `plan.md`
+  - Acceptance：
+    - 实现统一 `paper_key` 并在 selection/mapping/selection_log 中一致使用
+  - Verification:
+    - 对同一份 snapshots 重复离线构建，验证 key 行为符合文档承诺（稳定/不稳定均需明确）
+
+- [x] Missing-024: 把兜底限定为“已有 snapshot 的离线复现”
+  - Source: §1 Goals (5)「单点风险可兜底」与 §10「平台不可用/限流」
+  - Impact scope: 首次构建可用性；外部依赖故障时的连续性
+  - Location: `provetok/src/provetok/dataset/pipeline.py`, `provetok/src/provetok/sources/*`, `plan.md`
+  - Acceptance：
+    - 文档修订：把“兜底”明确限定为“已有 raw snapshots 时可离线复现”，首次构建仍依赖 OpenAlex
+  - Verification:
+    - 设计并验证“禁用 OpenAlex”的运行模式（若选择实现路径）；或文档明确不支持
+
+- [x] Missing-025: GitHub real-mode 子集采集（本仓库版本不实现）
+  - Source: §3.3「GitHub 用途」与 §6「real-mode 子集」
+  - Impact scope: real-mode 子集的可复现性与筛选逻辑；与 records 的对齐键
+  - Location:（新）`provetok/src/provetok/sources/github_*` 或 `provetok/src/provetok/dataset/*`（由实现确定）
+  - Acceptance:
+    - 明确该项为 future work；当前版本不提供 real-mode collector
+  - Verification:
+    - N/A
+
+### 12.2 Ambiguity（plan vs implementation unclear）
+
+- [x] Amb-004: raw works snapshot 的“单文件”口径 vs 当前实现的“works 与 requests 分离”口径
+  - Source: §5 Phase 1「raw_works_snapshot.jsonl（包含抓取时间、API query、分页信息）」
+  - Current impl:
+    - `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
+    - `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`（含 `ts_unix`/cursor/sha256 等）
+  - Decision（2026-02-05）：规范采用 works 与 requests 分离；不要求合并为单文件
+  - Verification: 纯离线复现：仅用 snapshots + selection log 能重建候选集与审计信息
+
+- [x] Amb-005: `public/attack_suite/` 是否要求导出物自包含脚本/模板
+  - Source: §2 Deliverables「attack_suite/：脚本与报告模板」
+  - Current impl: 导出时主要生成 `public/attack_suite/README.md`，脚本位于仓库 `provetok/scripts/run_audit_v2.py`
+  - Decision（2026-02-05）：导出物不自包含脚本；README 指向仓库脚本作为交付标准
+  - Verification: 从导出目录 `public/attack_suite/README.md` 出发，不读源码即可跑出 audit report JSON
+
+- [x] Amb-006: 仓库内跟踪演示用 `.codebook.json` 的合规边界
+  - Source: §2.2 Private deliverables「mapping_key_{seed} 默认不公开」与 §3 Compliance「不发布可逆指纹/映射」
+  - Current impl: 仓库内包含 `provetok/data/sealed/*.codebook.json`（演示用）
+  - Decision（2026-02-05）：允许保留演示 codebook，但必须声明其为合成示例；真实导出 codebook 仅存在于 export 的 private 目录且禁止发布
+  - Verification: README/本目录文档声明 + 导出目录不包含 `*.sealed.codebook.json`
 
 ---
 

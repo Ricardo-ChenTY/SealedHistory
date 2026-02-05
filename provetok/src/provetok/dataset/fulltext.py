@@ -92,10 +92,7 @@ def load_author_pdf_overrides(path: Optional[Path]) -> Dict[str, str]:
         raise FileNotFoundError(path)
     if path.suffix.lower() not in (".yaml", ".yml"):
         raise ValueError("author_pdf_overrides_file must be YAML")
-    try:
-        import yaml
-    except ImportError as e:  # pragma: no cover
-        raise ImportError("pyyaml is required: pip install pyyaml") from e
+    import yaml
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if isinstance(raw, dict):
@@ -191,71 +188,21 @@ def cache_fulltext_for_mapping_rows(
         pdf_sha256: Optional[str] = None
         status = "skipped"
         ft_source: Optional[str] = None
-        ft_error: Optional[str] = None
 
-        try:
-            if arxiv_id and policy in ("arxiv_only", "arxiv_and_author_pdf"):
-                out_dir = arxiv_root / arxiv_id.replace("/", "_")
-                pdf_path = arxiv_client.download_pdf(arxiv_id, out_dir)
-                sources.append(str(pdf_path))
-                pdf_sha256 = _sha256_file(pdf_path)
-                ft_source = "arxiv"
-                status = "ok_arxiv_pdf"
-
-                # Best-effort: also fetch arXiv source for formula parsing.
-                try:
-                    src_path = arxiv_client.download_source(arxiv_id, out_dir)
-                    sources.append(str(src_path))
-                    status = "ok_arxiv_pdf_source"
-                except Exception as e:
-                    logger.warning("arXiv source download failed for %s: %s", paper_id, e)
-            elif author_url and policy == "arxiv_and_author_pdf":
-                pdf_path, pdf_sha256 = pdf_fetcher.download(author_url, pdf_root)
-                sources.append(str(pdf_path))
-                ft_source = "author_pdf"
-                status = "ok_author_pdf"
-            else:
-                status = "missing"
-        except Exception as e:
-            status = f"error:{type(e).__name__}"
-            ft_error = str(e)
-
-            # Fallback: if arXiv failed and policy allows, try author PDF.
-            if arxiv_id and author_url and policy == "arxiv_and_author_pdf":
-                try:
-                    pdf_path, pdf_sha256 = pdf_fetcher.download(author_url, pdf_root)
-                    sources.append(str(pdf_path))
-                    ft_source = "author_pdf"
-                    status = "ok_author_pdf"
-                    ft_error = None
-                except Exception as e2:
-                    status = f"error:{type(e2).__name__}"
-                    ft_error = str(e2)
-
-            if write_index:
-                _append_jsonl(
-                    index_path,
-                    {
-                        "ts_unix": build_ts,
-                        "tier": tier,
-                        "paper_id": paper_id,
-                        "status": status,
-                        "error": ft_error,
-                        "arxiv_id": arxiv_id,
-                        "author_pdf_url": author_url,
-                        "fulltext_source": ft_source,
-                        "fulltext_policy": policy,
-                    },
-                )
-
-            new_row = dict(row)
-            new_row["fulltext_status"] = status
-            new_row["fulltext_source"] = ft_source
-            new_row["fulltext_policy"] = policy
-            if ft_error:
-                new_row["fulltext_error"] = ft_error
-            updated.append(new_row)
-            continue
+        if arxiv_id and policy in ("arxiv_only", "arxiv_and_author_pdf"):
+            out_dir = arxiv_root / arxiv_id.replace("/", "_")
+            pdf_path = arxiv_client.download_pdf(arxiv_id, out_dir)
+            sources.append(str(pdf_path))
+            pdf_sha256 = _sha256_file(pdf_path)
+            ft_source = "arxiv"
+            status = "ok_arxiv_pdf"
+        elif author_url and policy == "arxiv_and_author_pdf":
+            pdf_path, pdf_sha256 = pdf_fetcher.download(author_url, pdf_root)
+            sources.append(str(pdf_path))
+            ft_source = "author_pdf"
+            status = "ok_author_pdf"
+        else:
+            status = "missing"
 
         new_row = dict(row)
         new_row["fulltext_status"] = status

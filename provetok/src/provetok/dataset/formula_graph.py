@@ -7,8 +7,6 @@ failure modes explicit and auditable (manual queue).
 
 from __future__ import annotations
 
-import gzip
-import io
 import logging
 import re
 import tarfile
@@ -141,23 +139,15 @@ def _iter_tex_blobs_from_tar(tf: tarfile.TarFile) -> Iterable[Tuple[str, bytes]]
         f = tf.extractfile(m)
         if f is None:
             continue
-        try:
+        with f:
             yield name, f.read()
-        finally:
-            try:
-                f.close()
-            except Exception:
-                pass
 
 
 def _iter_tex_blobs_from_zip(zf: zipfile.ZipFile) -> Iterable[Tuple[str, bytes]]:
     for name in zf.namelist():
         if not str(name).lower().endswith(".tex"):
             continue
-        try:
-            yield name, zf.read(name)
-        except Exception:
-            continue
+        yield name, zf.read(name)
 
 
 def _read_tex_sources(
@@ -167,13 +157,11 @@ def _read_tex_sources(
     max_tex_bytes_total: int = 2_000_000,
 ) -> Tuple[List[str], str]:
     """Return (tex_texts, reason)."""
-    data = source_path.read_bytes()
-
-    # First try as tar archive (handles gzip/bz2/xz automatically with mode r:*).
-    try:
+    # Prefer archive detection helpers to keep control flow explicit.
+    if tarfile.is_tarfile(source_path):
         texts: List[str] = []
         total = 0
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
+        with tarfile.open(source_path, mode="r:*") as tf:
             for _, blob in _iter_tex_blobs_from_tar(tf):
                 if len(texts) >= max_tex_files:
                     break
@@ -183,14 +171,11 @@ def _read_tex_sources(
                 texts.append(blob.decode("utf-8", errors="replace"))
         if texts:
             return texts, "tar_tex"
-    except tarfile.TarError:
-        pass
 
-    # Try zip archive.
-    try:
+    if zipfile.is_zipfile(source_path):
         texts = []
         total = 0
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        with zipfile.ZipFile(source_path) as zf:
             for _, blob in _iter_tex_blobs_from_zip(zf):
                 if len(texts) >= max_tex_files:
                     break
@@ -200,21 +185,9 @@ def _read_tex_sources(
                 texts.append(blob.decode("utf-8", errors="replace"))
         if texts:
             return texts, "zip_tex"
-    except zipfile.BadZipFile:
-        pass
-
-    # Try gzip-decompress as plain text.
-    if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        try:
-            raw = gzip.decompress(data)
-            text = raw.decode("utf-8", errors="replace")
-            if text.strip():
-                return [text], "gzip_text"
-        except Exception:
-            pass
 
     # Fallback: treat as plain text.
-    text = data.decode("utf-8", errors="replace")
+    text = source_path.read_text(encoding="utf-8", errors="replace")
     if text.strip():
         return [text], "plain_text"
 
@@ -348,14 +321,11 @@ def extract_formula_graph_from_source_paths(
     if src is None or not src.exists():
         return FormulaGraph(), "missing_source", "no_source_archive"
 
-    try:
-        tex_texts, tex_reason = _read_tex_sources(
-            src,
-            max_tex_files=max_tex_files,
-            max_tex_bytes_total=max_tex_bytes_total,
-        )
-    except Exception as e:
-        return FormulaGraph(), "error", f"read_source:{type(e).__name__}"
+    tex_texts, tex_reason = _read_tex_sources(
+        src,
+        max_tex_files=max_tex_files,
+        max_tex_bytes_total=max_tex_bytes_total,
+    )
 
     if not tex_texts:
         return FormulaGraph(), "empty", f"no_tex:{tex_reason}"

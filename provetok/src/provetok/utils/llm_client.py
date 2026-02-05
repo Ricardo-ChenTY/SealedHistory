@@ -55,16 +55,12 @@ class LLMClient:
     def _ensure_client(self):
         if self._client is not None:
             return
-        try:
-            from openai import OpenAI
-            self._client = OpenAI(
-                api_key=self.config.api_key or "dummy",
-                base_url=self.config.api_base,
-                timeout=self.config.timeout,
-            )
-        except ImportError:
-            logger.warning("openai package not installed; using dummy mode")
-            self._client = None
+        from openai import OpenAI
+        self._client = OpenAI(
+            api_key=self.config.api_key or "dummy",
+            base_url=self.config.api_base,
+            timeout=self.config.timeout,
+        )
 
     def chat(
         self,
@@ -97,24 +93,20 @@ class LLMClient:
         if self._client is None or not self.config.api_key:
             return self._dummy_response(messages)
 
-        try:
-            resp = self._client.chat.completions.create(**params)
-            choice = resp.choices[0]
-            usage = {}
-            if resp.usage:
-                usage = {
-                    "prompt_tokens": resp.usage.prompt_tokens,
-                    "completion_tokens": resp.usage.completion_tokens,
-                    "total_tokens": resp.usage.total_tokens,
-                }
-            return LLMResponse(
-                content=choice.message.content or "",
-                usage=usage,
-                raw=resp.model_dump() if hasattr(resp, "model_dump") else None,
-            )
-        except Exception as e:
-            logger.error("LLM call failed: %s", e)
-            return self._dummy_response(messages)
+        resp = self._client.chat.completions.create(**params)
+        choice = resp.choices[0]
+        usage = {}
+        if resp.usage:
+            usage = {
+                "prompt_tokens": resp.usage.prompt_tokens,
+                "completion_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.total_tokens,
+            }
+        return LLMResponse(
+            content=choice.message.content or "",
+            usage=usage,
+            raw=resp.model_dump() if hasattr(resp, "model_dump") else None,
+        )
 
     def _dummy_response(self, messages: List[Dict[str, str]]) -> LLMResponse:
         """Return a placeholder when no real LLM is available."""

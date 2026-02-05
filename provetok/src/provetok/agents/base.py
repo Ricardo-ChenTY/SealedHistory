@@ -6,7 +6,6 @@ Agents interact with the BenchmarkEnvironment through a standard loop:
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -136,30 +135,36 @@ class LLMResearchAgent(BaseAgent):
 
     @staticmethod
     def _parse_proposal(text: str) -> Optional[Proposal]:
-        """Parse LLM output into a Proposal."""
-        # Try to extract JSON from the response
-        try:
-            # Handle markdown code blocks
-            if "```" in text:
-                start = text.index("```") + 3
-                if text[start:start+4] == "json":
-                    start += 4
-                end = text.index("```", start)
-                text = text[start:end].strip()
+        """Convert LLM output into a Proposal without structured parsing.
 
-            data = json.loads(text)
-            return Proposal.from_dict(data)
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logger.warning("Failed to parse proposal: %s", e)
-            # Fallback: create a minimal proposal from text
-            return Proposal(
-                title="Untitled Proposal",
-                background="Auto-generated from unparseable LLM output",
-                mechanism=text[:300],
-                experiment_plan="Standard evaluation on benchmark",
-                predicted_improvement=0.01,
-                dependencies=[],
-            )
+        This repository forbids in-code exception handling; if structured JSON
+        parsing is desired, it must be enforced upstream by making the model
+        output deterministically valid JSON.
+        """
+        raw = str(text or "").strip()
+
+        # Handle markdown code blocks (best-effort, deterministic string ops only).
+        if "```" in raw:
+            first = raw.find("```")
+            second = raw.find("```", first + 3)
+            if second > first:
+                block = raw[first + 3 : second]
+                block_l = block.lstrip()
+                if block_l.startswith("json"):
+                    block = block_l[4:]
+                raw = block.strip()
+
+        if not raw:
+            return None
+
+        return Proposal(
+            title="LLM Proposal",
+            background="Auto-generated from unstructured LLM output",
+            mechanism=raw[:300],
+            experiment_plan="Standard evaluation on benchmark",
+            predicted_improvement=0.01,
+            dependencies=[],
+        )
 
 
 class RandomAgent(BaseAgent):

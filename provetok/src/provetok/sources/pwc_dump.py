@@ -40,20 +40,14 @@ def _iter_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            try:
-                v = json.loads(line)
-            except Exception:
-                continue
+            v = json.loads(line)
             if isinstance(v, dict):
                 yield v
 
 
 def _iter_json(path: Path) -> Iterator[Dict[str, Any]]:
     with _open_text(path) as f:
-        try:
-            v = json.load(f)
-        except Exception:
-            return
+        v = json.load(f)
     if isinstance(v, list):
         for item in v:
             if isinstance(item, dict):
