@@ -116,7 +116,14 @@ def cmd_run(args: argparse.Namespace) -> None:
     """Run benchmark simulation."""
     from provetok.data.schema import load_records
     from provetok.env.environment import BenchmarkEnvironment
-    from provetok.agents.base import LLMResearchAgent, RandomAgent, run_agent_loop
+    from provetok.agents.base import (
+        CopyLastAgent,
+        DependencyAwareAgent,
+        FrontierSynthesisAgent,
+        LLMResearchAgent,
+        RandomAgent,
+        run_agent_loop,
+    )
     from provetok.eval.rubric import AutoRubricScorer, RubricWeights, ParetoPoint, save_eval_report
     from provetok.utils.config import load_config
     from provetok.utils.llm_client import LLMClient, LLMConfig
@@ -136,6 +143,12 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Create agent
     if args.agent == "random":
         agent = RandomAgent(seed=cfg.seed)
+    elif args.agent == "copylast":
+        agent = CopyLastAgent(seed=cfg.seed)
+    elif args.agent == "dependency":
+        agent = DependencyAwareAgent(seed=cfg.seed)
+    elif args.agent == "frontier":
+        agent = FrontierSynthesisAgent(seed=cfg.seed)
     else:
         llm_cfg = LLMConfig(
             model=cfg.llm.model,
@@ -259,7 +272,11 @@ def main():
     p_run.add_argument("--sealed", required=True)
     p_run.add_argument("--raw", required=True)
     p_run.add_argument("--config", default=None)
-    p_run.add_argument("--agent", choices=["llm", "random"], default="llm")
+    p_run.add_argument(
+        "--agent",
+        choices=["llm", "random", "copylast", "dependency", "frontier"],
+        default="llm",
+    )
     p_run.add_argument("--audit_report", default=None)
     p_run.add_argument("--output", default="eval_report.json")
 
@@ -269,7 +286,11 @@ def main():
     p_all.add_argument("--out_dir", default="output")
     p_all.add_argument("--seed", type=int, default=42)
     p_all.add_argument("--config", default=None)
-    p_all.add_argument("--agent", choices=["llm", "random"], default="llm")
+    p_all.add_argument(
+        "--agent",
+        choices=["llm", "random", "copylast", "dependency", "frontier"],
+        default="llm",
+    )
 
     # --- dataset ---
     from provetok.dataset.cli import register_dataset_commands

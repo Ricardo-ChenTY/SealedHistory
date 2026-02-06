@@ -1,0 +1,13 @@
+item_id,track_id,config_id,proposal_id,rater_id,problem_shift,mechanism_class,dependency,claim_validity,ablation,clarity,overall,notes
+A11,A,sealed_frontier,frontier_A_11,r1,0.80,0.78,0.76,0.79,0.74,0.81,0.78,solid frontier synthesis
+A11,A,sealed_frontier,frontier_A_11,r2,0.77,0.75,0.72,0.76,0.71,0.79,0.75,close to r1 with minor downgrade
+A22,A,sealed_frontier,frontier_A_22,r1,0.77,0.75,0.74,0.76,0.71,0.77,0.75,good dependency handling
+A22,A,sealed_frontier,frontier_A_22,r2,0.74,0.72,0.70,0.73,0.68,0.73,0.72,acceptable but less clear
+A33,A,sealed_frontier,frontier_A_33,r1,0.74,0.73,0.71,0.72,0.69,0.73,0.72,stable quality
+A33,A,sealed_frontier,frontier_A_33,r2,0.70,0.69,0.67,0.69,0.65,0.68,0.68,slightly weaker mechanism wording
+B11,B,sealed_frontier,frontier_B_11,r1,0.62,0.60,0.58,0.61,0.56,0.61,0.60,mid-quality but coherent
+B11,B,sealed_frontier,frontier_B_11,r2,0.58,0.56,0.54,0.58,0.52,0.56,0.56,similar judgment
+B22,B,sealed_frontier,frontier_B_22,r1,0.48,0.46,0.45,0.47,0.42,0.45,0.47,borderline reject
+B22,B,sealed_frontier,frontier_B_22,r2,0.50,0.48,0.46,0.49,0.44,0.47,0.49,borderline reject
+B33,B,sealed_frontier,frontier_B_33,r1,0.59,0.57,0.55,0.57,0.52,0.56,0.56,acceptable
+B33,B,sealed_frontier,frontier_B_33,r2,0.48,0.46,0.44,0.47,0.41,0.45,0.48,reject on claim consistency

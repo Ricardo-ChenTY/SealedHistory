@@ -56,10 +56,23 @@ Outputs land under `runs/exports/{dataset_version}/{public|private}/...` (see `d
 
 ## Key entry points
 
-- Benchmark CLI: `python -m provetok.cli run --agent {random|llm} --sealed ... --raw ... --output ...`
+- Benchmark CLI: `python -m provetok.cli run --agent {random|copylast|dependency|frontier|llm} --sealed ... --raw ... --output ...`
 - Dataset build: `python -m provetok.cli dataset build --config provetok/configs/dataset.yaml [--offline] [--track A|B|both]`
 - Legacy export only: `python -m provetok.cli dataset export-legacy --config provetok/configs/dataset.yaml --track both`
 - v2 leakage audit: `python provetok/scripts/run_audit_v2.py --sealed_jsonl ... --codebook_json ... --output ...`
+
+## Oral evidence pack
+
+```bash
+python provetok/scripts/run_oral_main_table.py --output_dir runs/EXP-011 --seeds 11 22 33
+python provetok/scripts/run_oral_ablations.py --output_dir runs/EXP-013 --seeds 11 22 33
+python provetok/scripts/run_oral_cross_domain.py --input runs/EXP-011/per_run_metrics.json --output_dir runs/EXP-014
+python provetok/scripts/compute_human_eval_kappa.py --ratings_csv docs/templates/human_eval_sheet.csv --output_dir runs/EXP-015
+```
+
+Narrative pack:
+- `docs/oral_checklist.md`
+- `docs/oral_story.md`
 
 ## Demo codebooks (synthetic)
 

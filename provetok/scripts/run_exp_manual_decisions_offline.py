@@ -29,6 +29,11 @@ def main() -> None:
     parser.add_argument("--run_dir", default="runs/EXP-006", help="Directory to write experiment artifacts")
     parser.add_argument("--dataset_version", default="exp-006-manual-decisions")
     parser.add_argument("--track", choices=["A", "B", "both"], default="A")
+    parser.add_argument(
+        "--disable_manual_decisions",
+        action="store_true",
+        help="Run the same offline export without manual_decisions_file configured.",
+    )
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -36,41 +41,43 @@ def main() -> None:
     cfg_path = run_dir / "cfg.yaml"
     manual_path = run_dir / "manual_decisions.jsonl"
 
-    _write_jsonl(
-        manual_path,
-        [
-            {
-                "paper_key": "https://openalex.org/W1",
-                "action": "exclude",
-                "reason_tag": "manual_exclude_exp",
-                "reviewer_id": "r1",
-                "evidence": "excluded by experiment",
-            },
-            {
-                "paper_key": "https://openalex.org/W2",
-                "action": "include",
-                "reason_tag": "manual_include_exp",
-                "reviewer_id": "r1",
-                "evidence": "included by experiment",
-            },
-            {
-                "paper_key": "https://openalex.org/W3",
-                "action": "exclude",
-                "reason_tag": "manual_exclude_exp",
-                "reviewer_id": "r1",
-                "evidence": "excluded by experiment",
-            },
-            {
-                "paper_key": "https://openalex.org/W4",
-                "action": "include",
-                "reason_tag": "manual_include_exp",
-                "reviewer_id": "r1",
-                "evidence": "included by experiment",
-            },
-        ],
-    )
+    if not args.disable_manual_decisions:
+        _write_jsonl(
+            manual_path,
+            [
+                {
+                    "paper_key": "https://openalex.org/W1",
+                    "action": "exclude",
+                    "reason_tag": "manual_exclude_exp",
+                    "reviewer_id": "r1",
+                    "evidence": "excluded by experiment",
+                },
+                {
+                    "paper_key": "https://openalex.org/W2",
+                    "action": "include",
+                    "reason_tag": "manual_include_exp",
+                    "reviewer_id": "r1",
+                    "evidence": "included by experiment",
+                },
+                {
+                    "paper_key": "https://openalex.org/W3",
+                    "action": "exclude",
+                    "reason_tag": "manual_exclude_exp",
+                    "reviewer_id": "r1",
+                    "evidence": "excluded by experiment",
+                },
+                {
+                    "paper_key": "https://openalex.org/W4",
+                    "action": "include",
+                    "reason_tag": "manual_include_exp",
+                    "reviewer_id": "r1",
+                    "evidence": "included by experiment",
+                },
+            ],
+        )
 
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    manual_cfg = f'"{manual_path.as_posix()}"' if not args.disable_manual_decisions else '""'
     cfg_path.write_text(
         "\n".join(
             [
@@ -101,7 +108,7 @@ def main() -> None:
                 "  topic_coverage_k: 1",
                 "  backfill_pool_multiplier: 1.0",
                 "  backfill_batch_size: 1",
-                f'  manual_decisions_file: "{manual_path.as_posix()}"',
+                f"  manual_decisions_file: {manual_cfg}",
                 "record_build:",
                 '  mode: "llm"',
                 "  require_llm: false",

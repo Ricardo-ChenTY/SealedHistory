@@ -157,6 +157,26 @@ Evidence requirements:
   - Metrics: repo docs mention synthetic demo codebooks; exports do not contain `*.sealed.codebook.json`
   - Checks: file content + file glob checks
 
+- ORAL-001 → `EXP-011`
+  - Metrics: utility mean±std across 3 seeds (A/B tracks), with Sealed vs Raw + two strong baselines
+  - Checks: `runs/EXP-011/main_results.csv` exists with required columns
+
+- ORAL-002 → `EXP-012` (materialized under `runs/EXP-011/attacks/*`)
+  - Metrics: adaptive black-box / white-box leakage metrics
+  - Checks: attack JSON contains `black_box` and `white_box` objects
+
+- ORAL-003 → `EXP-013`
+  - Metrics: ablation deltas for lexical/structure/numeric and manual logging auditability
+  - Checks: `runs/EXP-013/ablation_results.csv` + `runs/EXP-013/manual_logging_ablation.json`
+
+- ORAL-004 → `EXP-014`
+  - Metrics: per-track trend summary for A/B
+  - Checks: `runs/EXP-014/cross_domain_summary.json` contains trend flags for black-box and white-box
+
+- ORAL-005 → `EXP-015`
+  - Metrics: Cohen's kappa from dual-rater sheet
+  - Checks: report JSON status is `ok` once ratings are filled
+
 ---
 
 ## 3. Metrics / Artifacts Contract
@@ -242,6 +262,44 @@ Manual decisions file (`selection.manual_decisions_file`) input contract:
 
 ---
 
+## 5A. Oral Addendum Claims (2026-02-06)
+
+These claims complement CLAIM-001..009 for oral-readiness.
+
+### ORAL-001: Main-table evidence includes Sealed vs Raw + two strong baselines with 3 seeds
+- Required evidence:
+  - `runs/EXP-011/main_results.csv` and `runs/EXP-011/main_results.md`
+  - `runs/EXP-011/per_run_metrics.json`
+
+### ORAL-002: Adaptive attacks are reported under black-box and white-box assumptions
+- Required evidence:
+  - `runs/EXP-011/attacks/A_sealed.json`
+  - `runs/EXP-011/attacks/B_sealed.json`
+  - each report includes `black_box` and `white_box` metrics
+
+### ORAL-003: Component ablations quantify the effect of removing key sealing parts
+- Required evidence:
+  - `runs/EXP-013/ablation_results.csv`
+  - `runs/EXP-013/ablation_results.md`
+  - manual logging axis: `runs/EXP-013/manual_logging_ablation.json`
+
+### ORAL-004: Cross-domain trend check is explicit (Track A/B)
+- Required evidence:
+  - `runs/EXP-014/cross_domain_summary.json`
+  - `runs/EXP-014/cross_domain_summary.md`
+- Pass condition:
+  - at least black-box trend is verified across tracks; white-box gaps must be stated explicitly if present
+
+### ORAL-005: Human-eval consistency is executable and auditable
+- Required evidence:
+  - rating template: `docs/templates/human_eval_sheet.csv`
+  - agreement script: `provetok/scripts/compute_human_eval_kappa.py`
+  - report artifact: `runs/EXP-015/human_eval_report.json`
+- Pass condition:
+  - `human_eval_report.json` has `status=ok` with paired dual-rater items.
+
+---
+
 ## 6. Change Log (before/after, do not delete)
 
 - 2026-02-05:
@@ -255,3 +313,7 @@ Manual decisions file (`selection.manual_decisions_file`) input contract:
 - 2026-02-05:
   - Before: `plan.md` backlog items (Missing-021..025, Amb-004..006) were not executable claims.
   - After: Promoted a subset into CLAIM-005..009 with runnable experiments (`EXP-006..010`) and implemented `paper_key` + manual decision logging.
+
+- 2026-02-06:
+  - Before: Oral-readiness checklist (main-table/adaptive-attack/ablation/cross-domain/human-eval) was not executable in repo.
+  - After: Added ORAL-001..005 claims and runnable scripts with artifacts under `runs/EXP-011`, `runs/EXP-013`, `runs/EXP-014`, `runs/EXP-015`.

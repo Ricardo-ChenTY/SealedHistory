@@ -203,6 +203,184 @@ class RandomAgent(BaseAgent):
         return {
             "status": "completed",
             "accepted": review.accepted,
+            "proposal": proposal.to_dict(),
+            "feedback": feedback.to_dict(),
+            "scores": review.scores,
+        }
+
+
+class CopyLastAgent(BaseAgent):
+    """Heuristic strong baseline: copy the latest readable milestone."""
+
+    def __init__(self, seed: int = 42):
+        import random
+
+        self._rng = random.Random(seed)
+        self._read_papers: Dict[str, PaperRecord] = {}
+
+    def act(self, env: BenchmarkEnvironment) -> Dict[str, Any]:
+        available = env.available_papers()
+        if not available:
+            return {"status": "no_papers"}
+
+        for pid in available:
+            if pid in self._read_papers:
+                continue
+            record = env.read(pid)
+            if record is not None:
+                self._read_papers[pid] = record
+            if env.done:
+                return {"status": "budget_exhausted", "phase": "read"}
+
+        anchor_id = available[-1]
+        anchor = self._read_papers[anchor_id]
+
+        deps = [d for d in anchor.dependencies if d]
+        predicted = float(getattr(anchor.results, "delta_vs_prev", 0.01) or 0.01)
+        predicted = max(0.01, min(0.2, predicted))
+
+        proposal = Proposal(
+            title=f"CopyLast-{anchor.paper_id}",
+            background=anchor.background,
+            mechanism=anchor.mechanism,
+            experiment_plan=anchor.experiment,
+            predicted_improvement=predicted,
+            dependencies=deps,
+        )
+
+        feedback = env.experiment(proposal)
+        if env.done:
+            return {"status": "budget_exhausted", "phase": "experiment"}
+
+        review = env.review(proposal, feedback)
+        return {
+            "status": "completed",
+            "accepted": review.accepted,
+            "proposal": proposal.to_dict(),
+            "feedback": feedback.to_dict(),
+            "scores": review.scores,
+        }
+
+
+class DependencyAwareAgent(BaseAgent):
+    """Heuristic strong baseline: target dependency-consistent proposals."""
+
+    def __init__(self, seed: int = 42):
+        import random
+
+        self._rng = random.Random(seed)
+        self._read_papers: Dict[str, PaperRecord] = {}
+
+    def act(self, env: BenchmarkEnvironment) -> Dict[str, Any]:
+        available = env.available_papers()
+        if not available:
+            return {"status": "no_papers"}
+
+        for pid in available:
+            if pid in self._read_papers:
+                continue
+            record = env.read(pid)
+            if record is not None:
+                self._read_papers[pid] = record
+            if env.done:
+                return {"status": "budget_exhausted", "phase": "read"}
+
+        frontier = [self._read_papers[pid] for pid in available if pid in self._read_papers]
+        frontier = sorted(frontier, key=lambda r: r.paper_id)
+        anchor = frontier[-1]
+        prev = frontier[-2] if len(frontier) >= 2 else None
+
+        deps = [d for d in anchor.dependencies if d]
+        if not deps and prev is not None and prev.paper_id:
+            deps = [prev.paper_id]
+
+        bridge = prev.mechanism[:140] if prev is not None else ""
+        mechanism = anchor.mechanism if not bridge else f"{anchor.mechanism}\nBridge: {bridge}"
+        predicted = float(getattr(anchor.results, "delta_vs_prev", 0.01) or 0.01)
+        predicted = max(0.01, min(0.2, predicted))
+
+        proposal = Proposal(
+            title=f"DepAware-{anchor.paper_id}",
+            background=f"{anchor.background} Dependency-aware continuation from observed frontier.",
+            mechanism=mechanism,
+            experiment_plan=anchor.experiment,
+            predicted_improvement=predicted,
+            dependencies=deps,
+        )
+
+        feedback = env.experiment(proposal)
+        if env.done:
+            return {"status": "budget_exhausted", "phase": "experiment"}
+
+        review = env.review(proposal, feedback)
+        return {
+            "status": "completed",
+            "accepted": review.accepted,
+            "proposal": proposal.to_dict(),
+            "feedback": feedback.to_dict(),
+            "scores": review.scores,
+        }
+
+
+class FrontierSynthesisAgent(BaseAgent):
+    """Heuristic main variant: synthesize the latest two frontier papers."""
+
+    def __init__(self, seed: int = 42):
+        import random
+
+        self._rng = random.Random(seed)
+        self._read_papers: Dict[str, PaperRecord] = {}
+
+    def act(self, env: BenchmarkEnvironment) -> Dict[str, Any]:
+        available = env.available_papers()
+        if not available:
+            return {"status": "no_papers"}
+
+        for pid in available:
+            if pid in self._read_papers:
+                continue
+            record = env.read(pid)
+            if record is not None:
+                self._read_papers[pid] = record
+            if env.done:
+                return {"status": "budget_exhausted", "phase": "read"}
+
+        frontier = [self._read_papers[pid] for pid in available if pid in self._read_papers]
+        frontier = sorted(frontier, key=lambda r: r.paper_id)
+        anchor = frontier[-1]
+        prev = frontier[-2] if len(frontier) >= 2 else None
+
+        deps = list(anchor.dependencies)
+        if prev is not None and prev.paper_id and prev.paper_id not in deps:
+            deps.append(prev.paper_id)
+
+        bridge = prev.mechanism[:180] if prev is not None else anchor.mechanism[:90]
+        mechanism = f"{anchor.mechanism}\nSynthesis with prior frontier: {bridge}"
+        predicted = float(getattr(anchor.results, "delta_vs_prev", 0.02) or 0.02)
+        predicted = max(0.02, min(0.25, predicted + 0.01))
+
+        proposal = Proposal(
+            title=f"Frontier-{anchor.paper_id}",
+            background=(
+                f"{anchor.background} This proposal explicitly fuses immediate frontier evidence."
+            ),
+            mechanism=mechanism,
+            experiment_plan=anchor.experiment,
+            predicted_improvement=predicted,
+            dependencies=[d for d in deps if d],
+        )
+
+        feedback = env.experiment(proposal)
+        if env.done:
+            return {"status": "budget_exhausted", "phase": "experiment"}
+
+        review = env.review(proposal, feedback)
+        return {
+            "status": "completed",
+            "accepted": review.accepted,
+            "proposal": proposal.to_dict(),
+            "feedback": feedback.to_dict(),
+            "scores": review.scores,
         }
 
 

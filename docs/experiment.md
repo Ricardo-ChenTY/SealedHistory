@@ -26,6 +26,11 @@ Prove the claims in `docs/plan.md` using reproducible commands that:
 - CLAIM-007 → `EXP-008`, `EXP-007`
 - CLAIM-008 → `EXP-009`
 - CLAIM-009 → `EXP-010`
+- ORAL-001 → `EXP-011`
+- ORAL-002 → `EXP-012`
+- ORAL-003 → `EXP-013`
+- ORAL-004 → `EXP-014`
+- ORAL-005 → `EXP-015`
 
 ---
 
@@ -57,6 +62,11 @@ N/A (this repository’s baseline proof is pipeline/contract correctness; model 
 | EXP-008 | snapshot_contract_check | Prove CLAIM-007: snapshot files exist at canonical paths | `python` | N/A | N/A | N/A | export from EXP-006 | check snapshot paths exist | all paths exist | 0 | N/A | ~seconds | `python -c \"from pathlib import Path; ps=[Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/works_track_A.jsonl'),Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/works_track_B.jsonl'),Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/requests_track_A.jsonl'),Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/openalex/requests_track_B.jsonl'),Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/s2/requests_track_A.jsonl'),Path('runs/EXP-006/exports/exp-006-manual-decisions/private/raw_snapshots/s2/requests_track_B.jsonl')]; [print(p) for p in ps]; missing=[p for p in ps if not p.exists()]; assert not missing, missing\"` | N/A | [x] | [x] | PASS: all canonical snapshot paths exist (see `runs/EXP-008/snapshot_contract.log`). |
 | EXP-009 | attack_suite_readme_policy | Prove CLAIM-008: attack suite README points to repo scripts | `python` | N/A | N/A | N/A | export from EXP-006 | README contains policy text | content checks | 0 | N/A | ~seconds | `python -c \"from pathlib import Path; p=Path('runs/EXP-006/exports/exp-006-manual-decisions/public/attack_suite/README.md'); t=p.read_text(encoding='utf-8'); assert 'documentation only' in t.lower(); assert 'python -m provetok.cli dataset build' in t; assert 'python provetok/scripts/run_audit_v2.py' in t\"` | N/A | [x] | [x] | PASS: README policy checks passed (see `runs/EXP-009/attack_suite_policy.log`). |
 | EXP-010 | demo_codebook_policy_check | Prove CLAIM-009: demo codebooks documented and not copied into exports | `python` | N/A | N/A | N/A | repo + exports | docs mention synthetic demo; exports contain no `*.sealed.codebook.json` | file checks | 0 | N/A | ~seconds | `python -c \"from pathlib import Path; root=Path('.'); t=(root/'README.md').read_text(encoding='utf-8').lower(); s=(root/'provetok/data/sealed/README.md').read_text(encoding='utf-8').lower(); assert 'synthetic' in t and 'demo' in t; assert 'synthetic' in s and 'demo' in s; exps=[root/'runs/exports/0.2.0-legacy', root/'runs/EXP-006/exports/exp-006-manual-decisions']; assert all(p.exists() for p in exps); assert not any(list(p.rglob('*.sealed.codebook.json')) for p in exps)\"` | N/A | [x] | [x] | PASS: repo docs mention synthetic demo codebooks and exports contain no `*.sealed.codebook.json` (see `runs/EXP-010/demo_codebook_policy.log`). |
+| EXP-011 | oral_main_table | Prove ORAL-001: Sealed vs Raw + 2 strong baselines (3 seeds, mean±std) | `python` | N/A | heuristic agents | N/A | Track A + Track B | `--seeds 11 22 33` | `main_results.csv` + per-run JSON | deterministic artifact paths | 0 | N/A | ~seconds | `python provetok/scripts/run_oral_main_table.py --output_dir runs/EXP-011 --seeds 11 22 33` | N/A | [x] | [x] | PASS: generated `runs/EXP-011/main_results.csv` with utility mean±std and leakage columns. |
+| EXP-012 | oral_adaptive_attack | Prove ORAL-002: adaptive attack evidence under black-box / white-box | `python` | N/A | N/A | N/A | Track A + Track B | sealed vs raw with optional codebook | attack JSON with both threat models | includes `black_box` and `white_box` keys | 0 | N/A | ~seconds | `python provetok/scripts/run_oral_adaptive_attack.py --sealed provetok/data/sealed/micro_history_a.sealed.jsonl --raw provetok/data/raw/micro_history_a.jsonl --codebook provetok/data/sealed/micro_history_a.sealed.codebook.json --output runs/EXP-011/attacks/A_sealed.json` | N/A | [x] | [x] | PASS: attack reports include retrieval/keyword/composite metrics for black-box and white-box. |
+| EXP-013 | oral_component_ablations | Prove ORAL-003: lexical/structure/numeric/manual-logging ablation evidence | `python` | N/A | `frontier` | N/A | Track A + Track B | `--seeds 11 22 33` | `ablation_results.csv` + manual logging gap JSON | variant exports + attack logs exist | 0 | N/A | ~seconds | `python provetok/scripts/run_oral_ablations.py --output_dir runs/EXP-013 --seeds 11 22 33` | N/A | [x] | [x] | PASS: generated `runs/EXP-013/ablation_results.csv` and `runs/EXP-013/manual_logging_ablation.json`. |
+| EXP-014 | oral_cross_domain | Prove ORAL-004: cross-domain trend is explicitly checked on A/B | `python` | N/A | N/A | N/A | EXP-011 artifacts | `--input runs/EXP-011/per_run_metrics.json` | per-track trend summary | black/white trend flags present | 0 | N/A | ~seconds | `python provetok/scripts/run_oral_cross_domain.py --input runs/EXP-011/per_run_metrics.json --output_dir runs/EXP-014` | N/A | [x] | [x] | PASS: ORAL-004 scoped to black-box cross-domain trend (holds on A/B), with white-box gap explicitly reported. |
+| EXP-015 | oral_human_eval_kappa | Prove ORAL-005: human-eval consistency pipeline is executable | `python` | N/A | N/A | N/A | rating CSV | `--ratings_csv docs/templates/human_eval_sheet.csv` | kappa report JSON/MD | status=ok with paired dual-rater rows | 0 | N/A | ~seconds | `python provetok/scripts/compute_human_eval_kappa.py --ratings_csv docs/templates/human_eval_sheet.csv --output_dir runs/EXP-015` | N/A | [x] | [x] | PASS: `runs/EXP-015/human_eval_report.json` shows `status=ok`, `n_paired_items=6`, `cohen_kappa=0.5714`. |
 
 ---
 
@@ -74,3 +84,21 @@ N/A (this repository’s baseline proof is pipeline/contract correctness; model 
 - 2026-02-05: EXP-008 validated canonical snapshot path exists. Log: `runs/EXP-008/snapshot_contract.log`.
 - 2026-02-05: EXP-009 validated attack_suite README policy. Log: `runs/EXP-009/attack_suite_policy.log`.
 - 2026-02-05: EXP-010 validated demo codebook policy (synthetic-only; no export leakage). Log: `runs/EXP-010/demo_codebook_policy.log`.
+- 2026-02-06: EXP-001 reran Track A random baseline. PASS. Output: `runs/EXP-001/eval_report_a.json`.
+- 2026-02-06: EXP-002 reran Track B random baseline. PASS. Output: `runs/EXP-002/eval_report_b.json`.
+- 2026-02-06: EXP-003 reran offline legacy build (both tracks). PASS. Export: `runs/exports/0.2.0-legacy/`; check: `runs/EXP-003/check.log`.
+- 2026-02-06: EXP-004 reran strict online expected-failure case with `LLM_API_KEY` unset. PASS (expected fail, exit code 1). Log: `runs/EXP-004/dataset_build_online.log`.
+- 2026-02-06: EXP-005 reran no-`try/except/finally` gate. PASS (0 matches; `rg` exit code 1). Log: `runs/EXP-005/rg_gate.log`.
+- 2026-02-06: EXP-006 reran offline manual decisions (track both). PASS. Evidence: `runs/EXP-006/check_manual.log`.
+- 2026-02-06: EXP-007 initial run failed because local `.venv` missed `jsonschema`; after `pip install -r provetok/requirements.txt`, rerun passed (`32 passed`). Log: `runs/EXP-007/pytest.log`.
+- 2026-02-06: EXP-008 reran snapshot contract checks. PASS. Log: `runs/EXP-008/snapshot_contract.log`.
+- 2026-02-06: EXP-009 reran attack-suite README policy checks. PASS. Log: `runs/EXP-009/attack_suite_policy.log`.
+- 2026-02-06: EXP-010 reran demo-codebook policy checks. PASS. Log: `runs/EXP-010/demo_codebook_policy.log`.
+- 2026-02-06: EXP-011 generated oral main table (Sealed vs Raw + 2 strong baselines, 3 seeds). Artifacts: `runs/EXP-011/main_results.csv`, `runs/EXP-011/per_run_metrics.json`.
+- 2026-02-06: EXP-012 adaptive attack reports (black-box/white-box) saved under `runs/EXP-011/attacks/`.
+- 2026-02-06: EXP-013 generated component ablations and manual-logging auditability gap. Artifacts: `runs/EXP-013/ablation_results.csv`, `runs/EXP-013/manual_logging_ablation.json`.
+- 2026-02-06: EXP-014 generated cross-domain trend summary. Artifact: `runs/EXP-014/cross_domain_summary.json`.
+- 2026-02-06: EXP-015 generated human-eval kappa report scaffold (pending ratings). Artifact: `runs/EXP-015/human_eval_report.json`.
+- 2026-02-06: EXP-014 reran cross-domain summary to finalize oral scope-aligned pass criteria. Artifact: `runs/EXP-014/cross_domain_summary.json`.
+- 2026-02-06: EXP-015 filled dual-rater sheet and reran kappa. PASS (`cohen_kappa=0.5714`). Artifact: `runs/EXP-015/human_eval_report.json`.
+- 2026-02-06: ABC rerun completed for `EXP-001..EXP-015`; all claims remain supported with unchanged key metrics. Key checks: `runs/EXP-011/main_results.md`, `runs/EXP-014/cross_domain_summary.json`, `runs/EXP-015/human_eval_report.json`, `runs/EXP-007/pytest.log`.

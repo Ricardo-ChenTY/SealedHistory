@@ -17,7 +17,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from provetok.data.schema import load_records
 from provetok.env.environment import BenchmarkEnvironment
-from provetok.agents.base import LLMResearchAgent, RandomAgent, run_agent_loop
+from provetok.agents.base import (
+    CopyLastAgent,
+    DependencyAwareAgent,
+    FrontierSynthesisAgent,
+    LLMResearchAgent,
+    RandomAgent,
+    run_agent_loop,
+)
 from provetok.eval.rubric import (
     AutoRubricScorer, RubricWeights, ParetoPoint, save_eval_report,
 )
@@ -28,8 +35,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run benchmark")
     parser.add_argument("--sealed", required=True)
     parser.add_argument("--raw", required=True)
-    parser.add_argument("--agent", choices=["llm", "random"], default="llm")
+    parser.add_argument(
+        "--agent",
+        choices=["llm", "random", "copylast", "dependency", "frontier"],
+        default="llm",
+    )
     parser.add_argument("--budget", type=int, default=30)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--api_base", default="https://api.deepseek.com/v1")
     parser.add_argument("--audit_report", default=None)
@@ -47,7 +59,13 @@ def main():
     )
 
     if args.agent == "random":
-        agent = RandomAgent(seed=42)
+        agent = RandomAgent(seed=args.seed)
+    elif args.agent == "copylast":
+        agent = CopyLastAgent(seed=args.seed)
+    elif args.agent == "dependency":
+        agent = DependencyAwareAgent(seed=args.seed)
+    elif args.agent == "frontier":
+        agent = FrontierSynthesisAgent(seed=args.seed)
     else:
         llm = LLMClient(LLMConfig(model=args.model, api_base=args.api_base))
         agent = LLMResearchAgent(llm)
