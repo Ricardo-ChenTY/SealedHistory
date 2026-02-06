@@ -177,6 +177,26 @@ Evidence requirements:
   - Metrics: Cohen's kappa from dual-rater sheet
   - Checks: report JSON status is `ok` once ratings are filled
 
+- ORAL-006 → `EXP-016`
+  - Metrics: defended vs raw white-box leakage delta + utility retention on A/B
+  - Checks: `runs/EXP-016/summary.json` includes `tracks.*.white_box_delta_defended_minus_raw` and `utility_retention_defended_vs_raw`
+
+- ORAL-007 → `EXP-017`
+  - Metrics: bootstrap 95% CI, permutation p-value, Cohen's d for key utility comparisons
+  - Checks: `runs/EXP-017/summary.json` includes `comparisons[*].{ci95_low,ci95_high,p_perm_two_sided,cohen_d}`
+
+- ORAL-008 → `EXP-018`
+  - Metrics: top1 budget curves for black-box and white-box, covering sealed and defended variants
+  - Checks: `runs/EXP-018/budget_curves.json` includes `curves.{A_sealed,B_sealed,A_defended,B_defended}`
+
+- ORAL-009 → `EXP-019`
+  - Metrics: holdout utility retention and leakage trends under temporal split
+  - Checks: `runs/EXP-019/summary.json` includes `tracks.*.utility_retention` and `tracks.*.black_box_trend_holds`
+
+- ORAL-010 → `EXP-020`
+  - Metrics: expanded paired human-eval sample size and agreement statistics
+  - Checks: `runs/EXP-020/human_eval_report.json` includes `status=ok` and `n_paired_items>=30`
+
 ---
 
 ## 3. Metrics / Artifacts Contract
@@ -298,6 +318,43 @@ These claims complement CLAIM-001..009 for oral-readiness.
 - Pass condition:
   - `human_eval_report.json` has `status=ok` with paired dual-rater items.
 
+### ORAL-006: White-box defense + utility tradeoff is quantified (A/B tracks)
+- Required evidence:
+  - script: `provetok/scripts/run_oral_whitebox_defense.py`
+  - summary: `runs/EXP-016/summary.json`, `runs/EXP-016/summary.md`
+- Pass condition:
+  - both tracks report defended-vs-raw white-box leakage delta and utility retention
+  - negative tradeoffs must be explicitly retained (no hidden filtering)
+
+### ORAL-007: Statistical confidence is reported (CI + p-value + effect size)
+- Required evidence:
+  - script: `provetok/scripts/run_oral_stats_significance.py`
+  - summary: `runs/EXP-017/summary.json`, `runs/EXP-017/summary.md`
+- Pass condition:
+  - key pairwise utility comparisons include bootstrap CI, permutation p-value, and Cohen's d
+
+### ORAL-008: Adaptive budget attacks are profiled across defended and non-defended setups
+- Required evidence:
+  - script: `provetok/scripts/run_oral_budget_attack.py`
+  - summary: `runs/EXP-018/budget_curves.json`, `runs/EXP-018/budget_curves.md`
+- Pass condition:
+  - budgets are swept at multiple levels and reported for both black-box and white-box
+
+### ORAL-009: Holdout temporal generalization is explicitly evaluated
+- Required evidence:
+  - script: `provetok/scripts/run_oral_holdout_generalization.py`
+  - summary: `runs/EXP-019/summary.json`, `runs/EXP-019/summary.md`
+- Pass condition:
+  - per-track holdout utility retention and leakage trend flags are reported
+  - any non-improving track must be disclosed in the oral narrative
+
+### ORAL-010: Human-eval scaling check (>=30 paired items) is completed
+- Required evidence:
+  - rating sheet: `docs/templates/human_eval_sheet.csv`
+  - report: `runs/EXP-020/human_eval_report.json`, `runs/EXP-020/human_eval_report.md`
+- Pass condition:
+  - report `status=ok` and `n_paired_items>=30`
+
 ---
 
 ## 6. Change Log (before/after, do not delete)
@@ -317,3 +374,7 @@ These claims complement CLAIM-001..009 for oral-readiness.
 - 2026-02-06:
   - Before: Oral-readiness checklist (main-table/adaptive-attack/ablation/cross-domain/human-eval) was not executable in repo.
   - After: Added ORAL-001..005 claims and runnable scripts with artifacts under `runs/EXP-011`, `runs/EXP-013`, `runs/EXP-014`, `runs/EXP-015`.
+
+- 2026-02-06:
+  - Before: “冲顶会 oral” 的下一版决定性补齐项（防御tradeoff、统计显著性、budget攻击、holdout、扩样人评）没有统一验收口径。
+  - After: Added ORAL-006..010 claims and corresponding experiment contracts with artifacts under `runs/EXP-016`..`runs/EXP-020`.

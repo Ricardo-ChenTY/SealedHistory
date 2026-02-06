@@ -127,3 +127,32 @@
     - `runs/EXP-014/cross_domain_summary.json`
     - `runs/EXP-015/human_eval_report.json`
     - `runs/EXP-007/pytest.log` (`32 passed`)
+
+## ORAL-vNext-Loop-2026-02-06
+- 2026-02-06: `./.venv/bin/python -m pytest -q`
+  - Result: PASS (`32 passed`)
+  - Artifacts: terminal output (`32 passed in 1.90s`)
+- 2026-02-06: `./.venv/bin/python provetok/scripts/compute_human_eval_kappa.py --ratings_csv docs/templates/human_eval_sheet.csv --output_dir runs/EXP-015`
+  - Result: PASS
+  - Notes: refreshed ORAL-005 with expanded sheet (`n_rows=72`, `n_paired_items=36`, `cohen_kappa=0.1280`)
+  - Artifacts: `runs/EXP-015/human_eval_report.json`, `runs/EXP-015/human_eval_report.md`, `runs/EXP-015/run.log`
+- 2026-02-06: `./.venv/bin/python provetok/scripts/run_oral_whitebox_defense.py --output_dir runs/EXP-016 --seeds 11 22 33`
+  - Result: PASS
+  - Notes: `white_box_improves_all_tracks=true`; utility retention A=`0.5788`, B=`0.8656`.
+  - Artifacts: `runs/EXP-016/summary.json`, `runs/EXP-016/summary.md`, `runs/EXP-016/run.log`
+- 2026-02-06: `./.venv/bin/python provetok/scripts/run_oral_stats_significance.py --per_run runs/EXP-011/per_run_metrics.json --main_csv runs/EXP-011/main_results.csv --defense_summary runs/EXP-016/summary.json --output_dir runs/EXP-017`
+  - Result: PASS
+  - Notes: main diff (`sealed_frontier - raw_frontier`) = `-0.0095`, CI=`[-0.1379, 0.1220]`, p=`0.6059`.
+  - Artifacts: `runs/EXP-017/summary.json`, `runs/EXP-017/summary.md`, `runs/EXP-017/run.log`
+- 2026-02-06: `./.venv/bin/python provetok/scripts/run_oral_budget_attack.py --output_dir runs/EXP-018 --budgets 8 16 32 64 128`
+  - Result: PASS
+  - Notes: generated black-box/white-box top1 curves for sealed + defended setups.
+  - Artifacts: `runs/EXP-018/budget_curves.json`, `runs/EXP-018/budget_curves.md`, `runs/EXP-018/run.log`
+- 2026-02-06: `./.venv/bin/python provetok/scripts/run_oral_holdout_generalization.py --output_dir runs/EXP-019 --seeds 11 22 33 --quantile 0.7`
+  - Result: PASS
+  - Notes: `avg_utility_retention=0.9913`; `black_box_trend_holds_all_tracks=false` (Track B tie).
+  - Artifacts: `runs/EXP-019/summary.json`, `runs/EXP-019/summary.md`, `runs/EXP-019/run.log`
+- 2026-02-06: `./.venv/bin/python provetok/scripts/compute_human_eval_kappa.py --ratings_csv docs/templates/human_eval_sheet.csv --output_dir runs/EXP-020`
+  - Result: PASS
+  - Notes: scale-up reproducibility run (`n_paired_items=36`, `cohen_kappa=0.1280`).
+  - Artifacts: `runs/EXP-020/human_eval_report.json`, `runs/EXP-020/human_eval_report.md`

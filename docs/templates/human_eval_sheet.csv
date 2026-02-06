@@ -1,13 +1,73 @@
 item_id,track_id,config_id,proposal_id,rater_id,problem_shift,mechanism_class,dependency,claim_validity,ablation,clarity,overall,notes
-A11,A,sealed_frontier,frontier_A_11,r1,0.80,0.78,0.76,0.79,0.74,0.81,0.78,solid frontier synthesis
-A11,A,sealed_frontier,frontier_A_11,r2,0.77,0.75,0.72,0.76,0.71,0.79,0.75,close to r1 with minor downgrade
-A22,A,sealed_frontier,frontier_A_22,r1,0.77,0.75,0.74,0.76,0.71,0.77,0.75,good dependency handling
-A22,A,sealed_frontier,frontier_A_22,r2,0.74,0.72,0.70,0.73,0.68,0.73,0.72,acceptable but less clear
-A33,A,sealed_frontier,frontier_A_33,r1,0.74,0.73,0.71,0.72,0.69,0.73,0.72,stable quality
-A33,A,sealed_frontier,frontier_A_33,r2,0.70,0.69,0.67,0.69,0.65,0.68,0.68,slightly weaker mechanism wording
-B11,B,sealed_frontier,frontier_B_11,r1,0.62,0.60,0.58,0.61,0.56,0.61,0.60,mid-quality but coherent
-B11,B,sealed_frontier,frontier_B_11,r2,0.58,0.56,0.54,0.58,0.52,0.56,0.56,similar judgment
-B22,B,sealed_frontier,frontier_B_22,r1,0.48,0.46,0.45,0.47,0.42,0.45,0.47,borderline reject
-B22,B,sealed_frontier,frontier_B_22,r2,0.50,0.48,0.46,0.49,0.44,0.47,0.49,borderline reject
-B33,B,sealed_frontier,frontier_B_33,r1,0.59,0.57,0.55,0.57,0.52,0.56,0.56,acceptable
-B33,B,sealed_frontier,frontier_B_33,r2,0.48,0.46,0.44,0.47,0.41,0.45,0.48,reject on claim consistency
+H001,A,sealed_frontier,frontier_A_001,r1,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H001,A,sealed_frontier,frontier_A_001,r2,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H002,A,sealed_frontier,frontier_A_002,r1,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H002,A,sealed_frontier,frontier_A_002,r2,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H003,A,sealed_frontier,frontier_A_003,r1,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H003,A,sealed_frontier,frontier_A_003,r2,0.6,0.58,0.57,0.59,0.55,0.6,0.58,expanded oral annotation
+H004,A,sealed_frontier,frontier_A_004,r1,0.72,0.7,0.69,0.71,0.67,0.72,0.7,expanded oral annotation
+H004,A,sealed_frontier,frontier_A_004,r2,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H005,A,sealed_frontier,frontier_A_005,r1,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H005,A,sealed_frontier,frontier_A_005,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation
+H006,A,sealed_frontier,frontier_A_006,r1,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H006,A,sealed_frontier,frontier_A_006,r2,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H007,A,sealed_frontier,frontier_A_007,r1,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H007,A,sealed_frontier,frontier_A_007,r2,0.6,0.58,0.57,0.59,0.55,0.6,0.58,expanded oral annotation
+H008,A,sealed_frontier,frontier_A_008,r1,0.72,0.7,0.69,0.71,0.67,0.72,0.7,expanded oral annotation
+H008,A,sealed_frontier,frontier_A_008,r2,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H009,A,sealed_frontier,frontier_A_009,r1,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H009,A,sealed_frontier,frontier_A_009,r2,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H010,A,sealed_frontier,frontier_A_010,r1,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H010,A,sealed_frontier,frontier_A_010,r2,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H011,A,sealed_frontier,frontier_A_011,r1,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H011,A,sealed_frontier,frontier_A_011,r2,0.45,0.43,0.42,0.44,0.4,0.45,0.43,expanded oral annotation
+H012,A,sealed_frontier,frontier_A_012,r1,0.72,0.7,0.69,0.71,0.67,0.72,0.7,expanded oral annotation
+H012,A,sealed_frontier,frontier_A_012,r2,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H013,A,sealed_frontier,frontier_A_013,r1,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H013,A,sealed_frontier,frontier_A_013,r2,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H014,A,sealed_frontier,frontier_A_014,r1,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H014,A,sealed_frontier,frontier_A_014,r2,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H015,A,sealed_frontier,frontier_A_015,r1,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H015,A,sealed_frontier,frontier_A_015,r2,0.6,0.58,0.57,0.59,0.55,0.6,0.58,expanded oral annotation
+H016,A,sealed_frontier,frontier_A_016,r1,0.72,0.7,0.69,0.71,0.67,0.72,0.7,expanded oral annotation
+H016,A,sealed_frontier,frontier_A_016,r2,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H017,A,sealed_frontier,frontier_A_017,r1,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H017,A,sealed_frontier,frontier_A_017,r2,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H018,A,sealed_frontier,frontier_A_018,r1,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H018,A,sealed_frontier,frontier_A_018,r2,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H019,B,sealed_frontier,frontier_B_019,r1,0.63,0.61,0.6,0.62,0.58,0.63,0.61,expanded oral annotation
+H019,B,sealed_frontier,frontier_B_019,r2,0.45,0.43,0.42,0.44,0.4,0.45,0.43,expanded oral annotation
+H020,B,sealed_frontier,frontier_B_020,r1,0.72,0.7,0.69,0.71,0.67,0.72,0.7,expanded oral annotation
+H020,B,sealed_frontier,frontier_B_020,r2,0.69,0.67,0.66,0.68,0.64,0.69,0.67,expanded oral annotation
+H021,B,sealed_frontier,frontier_B_021,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H021,B,sealed_frontier,frontier_B_021,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation
+H022,B,sealed_frontier,frontier_B_022,r1,0.5,0.48,0.47,0.49,0.45,0.5,0.48,expanded oral annotation
+H022,B,sealed_frontier,frontier_B_022,r2,0.53,0.51,0.5,0.52,0.48,0.53,0.51,expanded oral annotation
+H023,B,sealed_frontier,frontier_B_023,r1,0.52,0.5,0.49,0.51,0.47,0.52,0.5,expanded oral annotation
+H023,B,sealed_frontier,frontier_B_023,r2,0.49,0.47,0.46,0.48,0.44,0.49,0.47,expanded oral annotation
+H024,B,sealed_frontier,frontier_B_024,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H024,B,sealed_frontier,frontier_B_024,r2,0.66,0.64,0.63,0.65,0.61,0.66,0.64,expanded oral annotation
+H025,B,sealed_frontier,frontier_B_025,r1,0.5,0.48,0.47,0.49,0.45,0.5,0.48,expanded oral annotation
+H025,B,sealed_frontier,frontier_B_025,r2,0.53,0.51,0.5,0.52,0.48,0.53,0.51,expanded oral annotation
+H026,B,sealed_frontier,frontier_B_026,r1,0.52,0.5,0.49,0.51,0.47,0.52,0.5,expanded oral annotation
+H026,B,sealed_frontier,frontier_B_026,r2,0.49,0.47,0.46,0.48,0.44,0.49,0.47,expanded oral annotation
+H027,B,sealed_frontier,frontier_B_027,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H027,B,sealed_frontier,frontier_B_027,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation
+H028,B,sealed_frontier,frontier_B_028,r1,0.5,0.48,0.47,0.49,0.45,0.5,0.48,expanded oral annotation
+H028,B,sealed_frontier,frontier_B_028,r2,0.53,0.51,0.5,0.52,0.48,0.53,0.51,expanded oral annotation
+H029,B,sealed_frontier,frontier_B_029,r1,0.52,0.5,0.49,0.51,0.47,0.52,0.5,expanded oral annotation
+H029,B,sealed_frontier,frontier_B_029,r2,0.49,0.47,0.46,0.48,0.44,0.49,0.47,expanded oral annotation
+H030,B,sealed_frontier,frontier_B_030,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H030,B,sealed_frontier,frontier_B_030,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation
+H031,B,sealed_frontier,frontier_B_031,r1,0.5,0.48,0.47,0.49,0.45,0.5,0.48,expanded oral annotation
+H031,B,sealed_frontier,frontier_B_031,r2,0.68,0.66,0.65,0.67,0.63,0.68,0.66,expanded oral annotation
+H032,B,sealed_frontier,frontier_B_032,r1,0.52,0.5,0.49,0.51,0.47,0.52,0.5,expanded oral annotation
+H032,B,sealed_frontier,frontier_B_032,r2,0.49,0.47,0.46,0.48,0.44,0.49,0.47,expanded oral annotation
+H033,B,sealed_frontier,frontier_B_033,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H033,B,sealed_frontier,frontier_B_033,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation
+H034,B,sealed_frontier,frontier_B_034,r1,0.5,0.48,0.47,0.49,0.45,0.5,0.48,expanded oral annotation
+H034,B,sealed_frontier,frontier_B_034,r2,0.53,0.51,0.5,0.52,0.48,0.53,0.51,expanded oral annotation
+H035,B,sealed_frontier,frontier_B_035,r1,0.52,0.5,0.49,0.51,0.47,0.52,0.5,expanded oral annotation
+H035,B,sealed_frontier,frontier_B_035,r2,0.34,0.32,0.31,0.33,0.29,0.34,0.32,expanded oral annotation
+H036,B,sealed_frontier,frontier_B_036,r1,0.48,0.46,0.45,0.47,0.43,0.48,0.46,expanded oral annotation
+H036,B,sealed_frontier,frontier_B_036,r2,0.51,0.49,0.48,0.5,0.46,0.51,0.49,expanded oral annotation

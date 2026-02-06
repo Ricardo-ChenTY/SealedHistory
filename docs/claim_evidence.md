@@ -1,7 +1,7 @@
 # Claim → Evidence Map
 
 Assessment date: 2026-02-06  
-Rerun confirmation: 2026-02-06 (ABC rerun; evidence unchanged)  
+Rerun confirmation: 2026-02-06 (ABC + oral-vNext rerun; evidence updated with `EXP-016..020`)  
 Source claims: `docs/plan.md`  
 Source experiment results: `docs/experiment.md`, `runs/EXP-*/`
 
@@ -33,4 +33,15 @@ Source experiment results: `docs/experiment.md`, `runs/EXP-*/`
 | ORAL-002 (adaptive attacks) | Yes | `runs/EXP-011/attacks/A_sealed.json`, `runs/EXP-011/attacks/B_sealed.json` | black-box and white-box metrics both reported |
 | ORAL-003 (ablations) | Yes | `runs/EXP-013/ablation_results.csv`, `runs/EXP-013/manual_logging_ablation.json` | lexical/structure/numeric/manual logging axes covered |
 | ORAL-004 (cross-domain) | Yes | `runs/EXP-014/cross_domain_summary.json` | black-box trend holds on A/B and white-box gap is explicitly disclosed per claim scope |
-| ORAL-005 (human eval consistency) | Yes | `docs/templates/human_eval_sheet.csv`, `provetok/scripts/compute_human_eval_kappa.py`, `runs/EXP-015/human_eval_report.json` | dual-rater sheet populated; `status=ok`, `cohen_kappa=0.5714` |
+| ORAL-005 (human eval consistency) | Yes | `docs/templates/human_eval_sheet.csv`, `provetok/scripts/compute_human_eval_kappa.py`, `runs/EXP-015/human_eval_report.json` | dual-rater pipeline executable; `status=ok`, `n_paired_items=36`, `cohen_kappa=0.1280` |
+| ORAL-006 (white-box defense tradeoff) | Yes | `provetok/scripts/run_oral_whitebox_defense.py`, `runs/EXP-016/summary.json` | both tracks report white-box leakage deltas and utility retention (`white_box_improves_all_tracks=true`) |
+| ORAL-007 (statistical confidence) | Yes | `provetok/scripts/run_oral_stats_significance.py`, `runs/EXP-017/summary.json` | CI + permutation p-value + Cohen's d all materialized |
+| ORAL-008 (budget attack curves) | Yes | `provetok/scripts/run_oral_budget_attack.py`, `runs/EXP-018/budget_curves.json` | budget sweeps reported for black-box/white-box and sealed/defended variants |
+| ORAL-009 (holdout generalization) | Yes | `provetok/scripts/run_oral_holdout_generalization.py`, `runs/EXP-019/summary.json` | holdout utility/leakage exposed per-track; Track B non-improvement is explicitly retained |
+| ORAL-010 (human-eval scale-up) | Yes | `docs/templates/human_eval_sheet.csv`, `runs/EXP-020/human_eval_report.json` | scale-up run completed with `n_paired_items=36` and reproducible output |
+
+## Residual Oral Risks (Not Claim Gaps)
+
+- White-box leakage remains high under budgeted attacks even after defense transforms (`runs/EXP-018/budget_curves.json`).
+- Holdout black-box leakage trend does not strictly improve on Track B (`runs/EXP-019/summary.json`).
+- Expanded human-eval agreement is low (`cohen_kappa=0.1280`), so oral narrative must avoid over-claiming consensus (`runs/EXP-020/human_eval_report.json`).

@@ -31,6 +31,10 @@
 - Oral 消融脚本: `provetok/scripts/run_oral_ablations.py`
 - Oral 跨域汇总脚本: `provetok/scripts/run_oral_cross_domain.py`
 - 人评一致性脚本: `provetok/scripts/compute_human_eval_kappa.py`
+- Oral 白盒防御 tradeoff 脚本: `provetok/scripts/run_oral_whitebox_defense.py`
+- Oral 统计显著性脚本: `provetok/scripts/run_oral_stats_significance.py`
+- Oral budget 攻击曲线脚本: `provetok/scripts/run_oral_budget_attack.py`
+- Oral holdout 泛化脚本: `provetok/scripts/run_oral_holdout_generalization.py`
 
 ## 3. Core Modules
 - `provetok/src/provetok/dataset/`: selection, fulltext, record_builder, QA, export manifest, sealed worlds, attack suite
@@ -46,7 +50,7 @@
 - Repo gate (`no try/except/finally`): `runs/EXP-005/rg_gate.log`
 - Manual decision + paper_key evidence: `runs/EXP-006/exports/exp-006-manual-decisions/`
 - Regression tests: `runs/EXP-007/pytest.log`
-- Oral evidence pack: `runs/EXP-011/`, `runs/EXP-013/`, `runs/EXP-014/`, `runs/EXP-015/`
+- Oral evidence pack: `runs/EXP-011/`, `runs/EXP-013/`, `runs/EXP-014/`, `runs/EXP-015/`, `runs/EXP-016/`, `runs/EXP-017/`, `runs/EXP-018/`, `runs/EXP-019/`, `runs/EXP-020/`
 
 ## 5. Environment Notes
 - Python: 当前本地使用 `3.14.2`（`.venv`）
