@@ -28,6 +28,10 @@
   arXiv:2305.10160 — 给出“不要明文发布测试集”的务实策略（包括加密/受控发布等），可作为你动机的直接支撑。  
   https://arxiv.org/abs/2305.10160
 
+- *How Much Do Large Language Model Cheat on Evaluation? Benchmarking Overestimation under the One-Time-Pad-Based Framework*  
+  arXiv:2507.19219 — 把“强保密/可复现”放在同一框架下讨论（OTP 思路），可作为你们“sealed release 是在 tradeoff 上做工程化可控”的对照路线。  
+  https://arxiv.org/abs/2507.19219
+
 ### 1.2 动态 / 新鲜基准（“时间窗 vs 你 multi-seed sealed worlds”）
 
 - Li et al., *LatestEval* — time-sensitive / dynamic test construction  
@@ -41,6 +45,12 @@
 
 - *VarBench* — 通过变量扰动/范围化来缓解污染与作弊（与“多 seed 世界”高度同族）  
   arXiv:2406.17681 https://arxiv.org/abs/2406.17681
+
+- *Towards Contamination Resistant Benchmarks* — 用“可逆但带 secret 的编码/变换”视角构造抗污染评测（文中示例为 Caesar cipher）  
+  arXiv:2505.08389 https://arxiv.org/abs/2505.08389
+
+- *LastingBench: Defend Benchmarks Against Knowledge Leakage* — “让 benchmark 更耐用/抗泄漏”的框架化方案（更接近你们想回答的 W1+W5）  
+  arXiv:2506.21614 https://arxiv.org/abs/2506.21614
 
 ### 1.4 污染检测（“检测 ≠ 发布机制”这一分歧点要写清楚）
 
@@ -57,6 +67,21 @@
 
 - *DyePack* — 通过“可追踪标记”来检测/定位污染  
   arXiv:2505.23001 https://arxiv.org/abs/2505.23001
+
+- *Detecting Benchmark Contamination Through Watermarking* — “发布前改写+水印 → 训练后检测 radioactivity”的另一条可追踪路线  
+  arXiv:2502.17259 https://arxiv.org/abs/2502.17259
+
+### 1.8 泄漏/作弊现象学（“开放 benchmark 被刷分/被泄漏”用来压实动机）
+
+- *Pitfalls of Evaluating Language Models with Open Benchmarks*  
+  arXiv:2507.00460 — 系统性指出 open benchmark 的泄漏/操纵风险（非常适合写 motivation + threat model 的“why we need sealing”).  
+  https://arxiv.org/abs/2507.00460
+- *Benchmarking Benchmark Leakage in Large Language Models*  
+  arXiv:2404.18824 — 用可扩展指标（PPL/N-gram 等）做 benchmark leakage 检测/报告。  
+  https://arxiv.org/abs/2404.18824
+- *On Leakage of Code Generation Evaluation Datasets*  
+  arXiv:2407.07565 — 代码域泄漏来源拆解（直接泄漏/合成数据间接泄漏/模型选择过拟合）。  
+  https://arxiv.org/abs/2407.07565
 
 ### 1.6 可提取记忆 / 抽取攻击（W2 的威胁模型地基）
 
@@ -143,11 +168,28 @@
 
 - 动态构造：LatestEval / LiveBench / LiveCodeBench
 - 检测：ConStat / PaCoST / Min-K% 系列
-- 标记追踪：DyePack
-- 发布策略消融：只封 ID / 只封 lexical / 只封结构 / 只封答案 / 纯加密（受控评测）/ 你们的 full sealing
+- 标记追踪：DyePack / watermarking（`arXiv:2505.23001`, `arXiv:2502.17259`）
+- benchmark“耐用化/抗泄漏”：LastingBench / contamination-resistant transforms（`arXiv:2506.21614`, `arXiv:2505.08389`）
+- 发布策略消融：只封 lexical（L1-only）/ 只封结构（L2-only）/ 只封数值（L3-only）/ 抽取式 summary / redact / 纯加密 or OTP（`arXiv:2507.19219`）/ 你们的 full sealing
 
 ### 4.3 论文呈现（避免 W3 “proposal/草稿感”）
 
 - 所有数字必须来自“可复现实验产物”（路径 + schema），主文只引用 key artifacts
 - 把占位符（XX/YY/Δ）全部替换为：`均值±std`、CI、p 值、效应量（d）
 - 每个核心结论至少有一个“反例/限制”图（例如 budget 曲线显示中预算就能抽取）
+
+### 4.4 W2（security）必须补齐的“可打分实验块”（建议主文 1 表 + appendix 1–2 图）
+
+把威胁模型拆成可验收的 3 类攻击面，并在论文里用同一套“Leakage 指标”串起来：
+
+1) **Linkability / Re-identification（公开 sealed → 链接回原始条目）**  
+   - baseline：TF-IDF / BM25（不需要 LLM）  
+   - 目标：把“能否还原/定位原题”变成 hit@k / MRR  
+   - 当前仓库可复现：`EXP-041`（注意：在当前 scale bundle 上，`sealed`/`sealed_l1only`/`sealed_summary` 对 raw 的 hit@1≈1.0；只有 `sealed_redact` 显著降低 linkability。见 `runs/EXP-041c/summary.json`）
+
+2) **Term recovery / codebook recovery（伪 token → 原术语）**  
+   - heuristic proxy + LLM attacker calibration（`EXP-032`）  
+   - 配套：预算曲线/失败优先（`EXP-018`, `EXP-029`）
+
+3) **Extraction under budget（Carlini/Nasr-style）**  
+   - 预算-成功率曲线 + defended-vs-sealed 对照（`EXP-037`）

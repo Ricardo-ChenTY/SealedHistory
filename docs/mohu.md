@@ -135,6 +135,21 @@
     - `runs/EXP-040/summary.json`
     - `runs/EXP-040/run_meta.json`
 
+- [x] Missing-030: Add linkability / re-identification diagnostic for threat model completeness (ORAL-017 / EXP-041)
+  - Location: `provetok/scripts/run_linkability_reidentification.py`, `docs/plan.md`, `docs/experiment.md`, `docs/claim_evidence.md`, `docs/verify_log.md`, `docs/plan_changelog.md`
+  - Acceptance:
+    - `python provetok/scripts/run_linkability_reidentification.py --dataset_dir runs/EXP-031/public --output_dir runs/EXP-041 --overwrite` succeeds.
+    - Output `summary.json` reports per-track hit@k/MRR/mean rank for variants `sealed`, `sealed_l1only`, `sealed_summary`, `sealed_redact`.
+    - ORAL-017 is added to the plan Evidence Map and claim→evidence docs.
+  - Implementation:
+    - Added a TF-IDF re-identification script (public variants → raw): `provetok/scripts/run_linkability_reidentification.py`.
+    - Ran the diagnostic and recorded artifacts under `runs/EXP-041c/` (see evidence paths).
+    - Updated plan/experiment/claim-evidence/verify logs to include ORAL-017 → EXP-041.
+  - Verified: 2026-02-12 via `./.venv/bin/python provetok/scripts/run_linkability_reidentification.py --dataset_dir runs/EXP-031/public --output_dir runs/EXP-041c --overwrite` (PASS)
+  - Evidence:
+    - `runs/EXP-041c/summary.json`
+    - `runs/EXP-041c/run_meta.json`
+
 ## Ambiguous
 
 

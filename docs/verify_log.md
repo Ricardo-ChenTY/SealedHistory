@@ -369,3 +369,9 @@
   - Result: PASS
   - Notes: micro raw≈sealed utility_mean (A 0.6455 vs 0.6187; B 0.6459 vs 0.6201); scale sealed ≥ raw; metadata_only/structure_only mechanism_class collapses (≤0.10 micro, 0.0 scale); usage `total_tokens=90452`; elapsed `~35.5 min`.
   - Artifacts: `runs/EXP-040/summary.json`, `runs/EXP-040/summary.md`, `runs/EXP-040/run_meta.json`, `runs/EXP-040/items.jsonl`
+
+## ORAL-017-Linkability-2026-02-12
+- 2026-02-12: `./.venv/bin/python provetok/scripts/run_linkability_reidentification.py --dataset_dir runs/EXP-031/public --output_dir runs/EXP-041c --overwrite`
+  - Result: PASS
+  - Notes: TF-IDF re-identification is perfect for `sealed`/`sealed_l1only`/`sealed_summary` (hit@1=1.0 on A/B), while `sealed_redact` greatly reduces linkability (hit@1=0.0007).
+  - Artifacts: `runs/EXP-041c/summary.json`, `runs/EXP-041c/summary.md`, `runs/EXP-041c/run_meta.json`

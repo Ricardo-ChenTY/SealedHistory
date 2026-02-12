@@ -50,6 +50,7 @@ Source experiment results: `docs/experiment.md`, `runs/EXP-*/`
 | ORAL-014 (Carlini/Nasr-style extraction stress) | Yes | `runs/EXP-037/summary.json`, `runs/EXP-037/tmp_budget_views/` | sealed AUC(top1)=1.0 vs defended AUC(top1)=0.0 (A/B); max-budget defended-minus-sealed white-box top1=-1.0 |
 | ORAL-015 (LLM-as-a-judge validation) | Yes | `runs/EXP-038/summary.json`, `runs/EXP-038/run_meta.json` | kappa=1.0, spearman=1.0, mae=0.0017, pass_rule=true |
 | ORAL-016 (validity invariance + metadata-only sanity) | Yes | `runs/EXP-039/summary.json`, `runs/EXP-040/summary.json` | EXP-039: spearman(raw,sealed)=1.0; metadata_only frontier utility=0.5626 vs sealed=0.8417. EXP-040: micro raw≈sealed utility_mean (A 0.6455 vs 0.6187; B 0.6459 vs 0.6201) and metadata_only/structure_only mechanism_class ≤0.10; scale sealed ≥ raw and metadata_only/structure_only mechanism_class=0.0. |
+| ORAL-017 (security: linkability / re-identification risk proxy) | Yes | `runs/EXP-041c/summary.json`, `runs/EXP-041c/run_meta.json` | TF-IDF re-identification: sealed/sealed_l1only/sealed_summary are perfectly linkable to raw (hit@1=1.0 on A/B); sealed_redact reduces linkability (hit@1=0.0007). |
 
 ## Residual Oral Risks (Not Claim Gaps)
 

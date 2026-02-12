@@ -455,6 +455,16 @@ Evidence requirements:
     * `runs/EXP-040/summary.json` shows micro sealed utility_mean within `0.08` of raw (A/B), and scale sealed utility_mean >= raw - `0.08` (A/B)
     * `runs/EXP-040/summary.json` shows `sealed` per_dimension_avg.mechanism_class exceeds `metadata_only` and `structure_only` by >= `0.2` (micro+scale, A/B)
 
+* ORAL-017 → `EXP-041` (security: linkability / re-identification risk proxy)
+
+  * Metrics:
+    * TF-IDF re-identification hit@k / MRR / mean rank: query=(public sealed variant), db=(raw)
+    * report across release variants: `sealed`, `sealed_l1only`, `sealed_summary`, `sealed_redact`
+  * Checks:
+    * `runs/EXP-041/summary.json` includes `per_track.{A,B}.variants.{sealed,sealed_l1only,sealed_summary,sealed_redact}.hit_at`
+    * `runs/EXP-041/summary.json` includes `per_track.{A,B}.variants.*.mrr` and `mean_rank`
+    * Report the tradeoff explicitly in paper: `sealed_redact` reduces linkability at the cost of utility (see ORAL-006 / ORAL-008 / ORAL-016)
+
 ---
 
 ## 3. Metrics / Artifacts Contract

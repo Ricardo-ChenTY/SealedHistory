@@ -107,3 +107,10 @@
 - Evidence snapshot:
   - `runs/EXP-040/summary.json`
   - `runs/EXP-040/run_meta.json`
+
+## 2026-02-12 (ORAL-017: Linkability / Re-identification)
+- Decision: Added ORAL-017 and implemented a TF-IDF re-identification diagnostic (`EXP-041`) across public release variants.
+- Reason: Make “公开 sealed 是否可被链接回原始条目？”可量化（hit@k/MRR/mean rank），补齐 threat model 的可检验安全性论证入口。
+- Evidence snapshot:
+  - `runs/EXP-041c/summary.json`
+  - `runs/EXP-041c/run_meta.json`
