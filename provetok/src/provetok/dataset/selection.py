@@ -25,6 +25,7 @@ _FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
 _ARXIV_NEW_RE = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
 _ARXIV_OLD_RE = re.compile(r"^[a-z\-]+(?:\.[a-z\-]+)?/\d{7}(?:v\d+)?$", re.IGNORECASE)
+_S2_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 
 def _parse_int(value: Any) -> Optional[int]:
@@ -93,6 +94,23 @@ def looks_like_arxiv_id(arxiv_id: Any) -> bool:
     return bool(_ARXIV_NEW_RE.fullmatch(s) or _ARXIV_OLD_RE.fullmatch(s))
 
 
+def normalize_s2_id(s2_id: Any) -> str:
+    s = str(s2_id or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if low.startswith("s2:"):
+        s = s[3:]
+    return str(s).strip()
+
+
+def looks_like_s2_id(s2_id: Any) -> bool:
+    s = normalize_s2_id(s2_id)
+    if not s:
+        return False
+    return bool(_S2_SHA_RE.fullmatch(s))
+
+
 def normalize_openalex_id(openalex_id: Any) -> str:
     s = str(openalex_id or "").strip()
     if not s:
@@ -120,12 +138,16 @@ def compute_paper_key(
     arxiv_id: Any,
     openalex_id: Any,
     title: Any,
+    s2_id: Any = None,
 ) -> str:
     if looks_like_doi(doi):
         return f"doi:{normalize_doi(doi)}"
 
     if looks_like_arxiv_id(arxiv_id):
         return f"arxiv:{normalize_arxiv_id(arxiv_id)}"
+
+    if looks_like_s2_id(s2_id):
+        return f"s2:{normalize_s2_id(s2_id).lower()}"
 
     oa_norm = normalize_openalex_id(openalex_id)
     if not oa_norm:
@@ -148,6 +170,12 @@ def manual_lookup_keys(candidate: "WorkCandidate") -> List[str]:
         keys.append(f"arxiv:{arxiv_norm}")
         keys.append(arxiv_norm)
         keys.append(str(candidate.arxiv_id))
+
+    s2_norm = normalize_s2_id(candidate.s2_id)
+    if s2_norm:
+        keys.append(f"s2:{s2_norm.lower()}")
+        keys.append(s2_norm)
+        keys.append(str(candidate.s2_id))
 
     oa_norm = normalize_openalex_id(candidate.openalex_id)
     if oa_norm:
@@ -201,6 +229,7 @@ class WorkCandidate:
     referenced_works: Tuple[str, ...]
     concept_ids: Tuple[str, ...]
     raw: Dict[str, Any]
+    s2_id: Optional[str] = None
 
 
 def parse_openalex_work(w: Dict[str, Any]) -> WorkCandidate:
@@ -220,9 +249,11 @@ def parse_openalex_work(w: Dict[str, Any]) -> WorkCandidate:
 
     # Best-effort arXiv id from OpenAlex primary_location / ids
     arxiv_id = None
+    s2_id = None
     ids = w.get("ids") or {}
     if isinstance(ids, dict):
         arxiv_id = ids.get("arxiv_id") or None
+        s2_id = ids.get("s2_id") or None
 
     return WorkCandidate(
         paper_key=compute_paper_key(
@@ -230,16 +261,78 @@ def parse_openalex_work(w: Dict[str, Any]) -> WorkCandidate:
             arxiv_id=arxiv_id,
             openalex_id=oa_id,
             title=title,
+            s2_id=s2_id,
         ),
         openalex_id=oa_id,
         title=title,
         publication_year=year_int,
         doi=doi,
         arxiv_id=arxiv_id,
+        s2_id=s2_id,
         cited_by_count=cited_by,
         referenced_works=referenced_ids,
         concept_ids=concept_ids,
         raw=w,
+    )
+
+
+def parse_s2_work(w: Dict[str, Any]) -> WorkCandidate:
+    """Parse a Semantic Scholar work into WorkCandidate shape."""
+    s2_id = str(w.get("paperId") or "").strip()
+    title = str(w.get("title") or "")
+    year_int = _parse_int(w.get("year"))
+
+    ext = w.get("externalIds") or {}
+    if not isinstance(ext, dict):
+        ext = {}
+
+    doi = ext.get("DOI") or ext.get("Doi") or w.get("doi") or None
+    arxiv_id = ext.get("ArXiv") or ext.get("arXiv") or w.get("arxivId") or None
+
+    refs = w.get("references") or []
+    referenced_ids: List[str] = []
+    if isinstance(refs, list):
+        for r in refs:
+            if not isinstance(r, dict):
+                continue
+            ref_pid = str(r.get("paperId") or "").strip()
+            if ref_pid:
+                referenced_ids.append(f"S2:{ref_pid}")
+
+    fos = w.get("fieldsOfStudy") or []
+    concept_ids: List[str] = []
+    if isinstance(fos, list):
+        for item in fos:
+            s = str(item or "").strip()
+            if not s:
+                continue
+            slug = re.sub(r"\s+", "_", s.lower())
+            concept_ids.append(f"s2fos:{slug}")
+
+    oa_like_id = f"S2:{s2_id}" if s2_id else f"S2:unknown:{title_sha256_12(title)}"
+    cited_by = int(w.get("citationCount", 0) or 0)
+
+    raw = dict(w)
+    raw["_source_kind"] = "s2_search"
+
+    return WorkCandidate(
+        paper_key=compute_paper_key(
+            doi=doi,
+            arxiv_id=arxiv_id,
+            openalex_id=oa_like_id,
+            title=title,
+            s2_id=s2_id,
+        ),
+        openalex_id=oa_like_id,
+        title=title,
+        publication_year=year_int,
+        doi=doi,
+        arxiv_id=arxiv_id,
+        s2_id=s2_id or None,
+        cited_by_count=cited_by,
+        referenced_works=tuple(referenced_ids),
+        concept_ids=tuple(concept_ids),
+        raw=raw,
     )
 
 
@@ -435,10 +528,17 @@ def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
         openalex_id = dd.get("openalex_id") or ""
         doi = dd.get("doi") or ""
         arxiv_id = dd.get("arxiv_id") or ""
+        s2_id = dd.get("s2_id") or ""
         title = dd.get("title") or ""
 
-        if not raw_key and not str(openalex_id).strip() and not str(doi).strip() and not str(arxiv_id).strip():
-            raise ValueError(f"manual decision row {idx} missing paper_key/openalex_id/doi/arxiv_id")
+        if (
+            not raw_key
+            and not str(openalex_id).strip()
+            and not str(doi).strip()
+            and not str(arxiv_id).strip()
+            and not str(s2_id).strip()
+        ):
+            raise ValueError(f"manual decision row {idx} missing paper_key/openalex_id/doi/arxiv_id/s2_id")
 
         key = ""
         if raw_key:
@@ -447,6 +547,8 @@ def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
                 key = "doi:" + normalize_doi(raw_key_stripped)
             elif raw_key_stripped.startswith("arxiv:") or looks_like_arxiv_id(raw_key_stripped):
                 key = "arxiv:" + normalize_arxiv_id(raw_key_stripped)
+            elif raw_key_stripped.startswith("s2:") or looks_like_s2_id(raw_key_stripped):
+                key = "s2:" + normalize_s2_id(raw_key_stripped).lower()
             elif raw_key_stripped.startswith("openalex:"):
                 key = raw_key_stripped
             else:
@@ -455,7 +557,7 @@ def load_manual_decisions(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
                     key = "openalex:" + oa_norm
 
         if not key:
-            key = compute_paper_key(doi=doi, arxiv_id=arxiv_id, openalex_id=openalex_id, title=title)
+            key = compute_paper_key(doi=doi, arxiv_id=arxiv_id, openalex_id=openalex_id, title=title, s2_id=s2_id)
 
         if not key:
             raise ValueError(f"manual decision row {idx} missing paper_key fields")

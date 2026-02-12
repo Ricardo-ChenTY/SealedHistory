@@ -100,10 +100,12 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    exp_id = out_dir.name
 
     per_run = _read_per_run(Path(args.per_run))
     csv_rows = _read_main_csv(Path(args.main_csv))
     defense = json.loads(Path(args.defense_summary).read_text(encoding="utf-8")) if Path(args.defense_summary).exists() else {}
+    defense_id = Path(args.defense_summary).parent.name if Path(args.defense_summary).exists() else ""
 
     comparisons = [
         _compare(per_run, "sealed_frontier", "raw_frontier"),
@@ -133,8 +135,10 @@ def main() -> None:
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     md = [
-        "# Statistical Confidence & Significance (EXP-017)",
+        f"# Statistical Confidence & Significance ({exp_id})",
         "",
+        f"- per_run: `{args.per_run}`",
+        f"- main_csv: `{args.main_csv}`",
         "| Comparison (left-right) | Mean Left | Mean Right | Diff | 95% CI | p-value | Cohen's d |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
@@ -170,7 +174,7 @@ def main() -> None:
         md.extend(
             [
                 "",
-                "## White-Box Defense Snapshot (EXP-016)",
+                f"## White-Box Defense Snapshot ({defense_id or 'defense'})",
                 "",
                 "| Track | WB Defended | WB Raw | Delta |",
                 "|---|---:|---:|---:|",

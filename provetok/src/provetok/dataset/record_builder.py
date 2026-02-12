@@ -275,6 +275,32 @@ def _validate_strict_background(
     return issues
 
 
+def _parse_llm_json_object(text: str) -> Dict[str, Any]:
+    """Parse a JSON object from LLM output, tolerant to fenced wrappers."""
+    raw = str(text or "").strip()
+    if not raw:
+        raise ValueError("empty_response")
+
+    # Common case: markdown fenced block.
+    fenced = raw
+    if fenced.startswith("```"):
+        fenced = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", fenced)
+        fenced = re.sub(r"\s*```$", "", fenced)
+        fenced = fenced.strip()
+        raw = fenced
+
+    # Fallback: extract first top-level object substring.
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        raw = raw[start : end + 1]
+
+    obj = json.loads(raw)
+    if not isinstance(obj, dict):
+        raise ValueError("bad_json_root")
+    return obj
+
+
 def build_record_v2_from_abstract(
     *,
     paper_id: str,
@@ -329,19 +355,8 @@ def build_record_v2_from_abstract(
                 temperature=0.0,
                 max_tokens=1200,
             )
-        extracted = json.loads(resp.content.strip())
-        llm_parse_ok = isinstance(extracted, dict)
-
-        if not llm_parse_ok:
-            last_llm_error = "bad_json_root"
-            logger.warning(
-                "LLM extraction returned non-object JSON for %s (attempt %d/%d)",
-                paper_id,
-                attempt + 1,
-                attempts,
-            )
-            extracted = {}
-            continue
+        extracted = _parse_llm_json_object(resp.content)
+        llm_parse_ok = True
 
         if not strict_paraphrase:
             break

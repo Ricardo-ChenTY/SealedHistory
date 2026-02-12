@@ -178,8 +178,8 @@ def cache_fulltext_for_mapping_rows(
 
         author_url = row.get("author_pdf_url") or None
         if not author_url:
-            # Allow override by openalex_id/doi/paper_id
-            for k in (row.get("openalex_id"), row.get("doi"), paper_id):
+            # Allow override by s2_id/doi/paper_id (and legacy openalex_id alias).
+            for k in (row.get("s2_id"), row.get("openalex_id"), row.get("doi"), paper_id):
                 if k and str(k) in overrides:
                     author_url = overrides[str(k)]
                     break

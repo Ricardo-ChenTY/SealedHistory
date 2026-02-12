@@ -10,16 +10,10 @@ tracks:
     # Tiered release strategy:
     # - core: small, strongly-audited subset used for main benchmark results
     # - extended: large pool used for coverage/robustness/leakage audits
-    core_size: 120
-    extended_size: 2000
-    # OpenAlex filters are best-effort. For reproducibility, the pipeline always
-    # records the full query + raw snapshots under private/raw_snapshots/.
-    openalex:
-      # Concepts: use OpenAlex concept IDs (C...).
-      concepts:
-        - "https://openalex.org/C31972630"   # Computer vision
-        - "https://openalex.org/C108583219"  # Deep learning
-      # Keywords are joined into a single OpenAlex `search` string.
+    core_size: 80
+    extended_size: 1000
+    # S2-first candidate retrieval (docs/S2).
+    s2:
       keywords:
         - "vision transformer"
         - "resnet"
@@ -29,20 +23,18 @@ tracks:
         - "segmentation"
         - "masked autoencoder"
         - "contrastive learning"
-      venues: []
+      fields_of_study:
+        - "Computer Science"
       year_from: 2009
       year_to: 2025
+      min_citation_count: 0
+      open_access_pdf_only: false
+      max_results: 4000
   B:
     name: "sequence_modeling"
-    core_size: 120
-    extended_size: 2000
-    openalex:
-      concepts:
-        - "https://openalex.org/C204321447"  # Natural language processing
-        - "https://openalex.org/C137293760"  # Language model
-        - "https://openalex.org/C147168706"  # Recurrent neural network
-        - "https://openalex.org/C66322947"   # Transformer
-        - "https://openalex.org/C203005215"  # Machine translation
+    core_size: 80
+    extended_size: 1000
+    s2:
       keywords:
         - "language model"
         - "transformer"
@@ -54,26 +46,24 @@ tracks:
         - "gpt"
         - "machine translation"
         - "text generation"
-      venues: []
+      fields_of_study:
+        - "Computer Science"
+        - "Linguistics"
       year_from: 2009
       year_to: 2025
+      min_citation_count: 0
+      open_access_pdf_only: false
+      max_results: 4000
 
 sources:
-  openalex:
-    base_url: "https://api.openalex.org"
-    mailto: ""
-    per_page: 200
-    max_pages: 50
-    rate_limit_qps: 3
+  primary: "s2"
   s2:
-    base_url: "https://api.semanticscholar.org/graph/v1"
+    base_url: "https://ai4scholar.net/graph/v1"
     api_key_env: "S2_API_KEY"
     rate_limit_qps: 1
-  opencitations:
-    base_url: "https://api.opencitations.net/index/v1"
-    rate_limit_qps: 2
-    enable: true
-    tiers: ["core"]
+    enable_batch_enrich: true
+    # paper/batch hard limit = 500 ids per request.
+    batch_chunk_size: 500
   pwc_dump:
     # Optional: local Papers-with-Code dump for auxiliary QA cross-checks.
     enable: false
@@ -86,6 +76,7 @@ sources:
 
 selection:
   topic_coverage_k: 16
+  backfill_pool_multiplier: 3.0
   centrality_weights:
     pagerank: 1.0
     indegree: 0.5

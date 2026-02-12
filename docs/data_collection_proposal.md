@@ -25,8 +25,8 @@
 ## 2. 数据来源与合规策略
 
 ### 2.1 主通路：学术元数据与引用图谱
-1) **OpenAlex（CC0）**：works 元数据、concept、引用边（主图谱）  
-2) **Semantic Scholar API**：交叉校验元数据与引用边、补齐 DOI/arXiv/abstract、提供 openAccessPdf 信号（遵守许可与 rate limit）  
+1) **Semantic Scholar API（S2）**：works 元数据、引用边、DOI/arXiv/abstract、openAccessPdf（主图谱）  
+2) **OpenAlex（CC0）**：仅保留离线兼容入口（legacy fixtures）  
 3) **OpenCitations（可选，CC0）**：DOI-to-DOI 引文边第三来源校验
 
 ### 2.2 全文可访问性（仅内部解析）
@@ -67,11 +67,11 @@ Public record 字段与 JSON Schema：
 
 对应仓库配置：`provetok/configs/dataset.yaml`
 
-### Phase 1：候选 works 抓取（OpenAlex 主、S2/OC 交叉）
+### Phase 1：候选 works 抓取（S2 主、OpenAlex legacy 兼容、OC 交叉）
 输出：
-- `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
-- `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`（含请求参数、响应 sha256）
+- `private/raw_snapshots/s2/works_track_{A,B}.jsonl`
 - `private/raw_snapshots/s2/requests_track_{A,B}.jsonl`
+- `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`（legacy 兼容，可选）
 - `private/raw_snapshots/opencitations/*.jsonl`（可选）
 
 ### Phase 2：引用图构建与对齐
@@ -83,7 +83,7 @@ Public record 字段与 JSON Schema：
 ### Phase 3：Track 选取（Selection Protocol）
 **自动化排序（可复现）**
 - 对候选图计算中心性信号（如 PageRank/入度等）
-- topic 覆盖约束（基于 OpenAlex concepts 或 taxonomy）
+- topic 覆盖约束（基于 S2 fieldsOfStudy 或 taxonomy）
 
 **可选：手工 include/exclude（默认关闭）**
 - 允许少量 include/exclude，但每次必须写入 `public/selection_log_{core,extended}.jsonl`

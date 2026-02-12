@@ -222,7 +222,35 @@ def summary(results: Dict[str, AttackResult]) -> Dict[str, Any]:
 
 
 def _parse_json_list(text: str) -> List[str]:
-    return [str(text or "").strip()]
+    # Deterministic, no-exception parsing: extract up to 3 string guesses from
+    # common "JSON list" formats. If the model returns invalid JSON, we still
+    # try to recover something usable without `try/except`.
+    t = str(text or "").strip()
+
+    # If a bracketed list exists, focus on it to avoid picking up stray quotes.
+    if "[" in t and "]" in t:
+        i = t.find("[")
+        j = t.rfind("]")
+        if 0 <= i < j:
+            t = t[i : j + 1]
+
+    # Prefer double-quoted strings (JSON).
+    out = [s.strip() for s in re.findall(r"\"([^\"]+)\"", t) if str(s or "").strip()]
+    if not out:
+        # Fallback: single-quoted list-like.
+        out = [s.strip() for s in re.findall(r"'([^']+)'", t) if str(s or "").strip()]
+    if out:
+        return out[:3]
+
+    # Last resort: split by newline/commas and strip bullets.
+    parts = re.split(r"[,\n]+", t)
+    cleaned: List[str] = []
+    for p in parts:
+        s = str(p or "").strip()
+        s = re.sub(r"^(?:\\d+\\.|-)\\s*", "", s)
+        if s:
+            cleaned.append(s)
+    return cleaned[:3]
 
 
 def _get_score(llm: LLMClient, prompt: str) -> float:

@@ -130,8 +130,20 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     cfg = load_config(Path(args.config) if args.config else None)
 
-    sealed = load_records(Path(args.sealed))
-    raw = load_records(Path(args.raw))
+    if args.sealed and args.raw:
+        sealed_path = Path(args.sealed)
+        raw_path = Path(args.raw)
+    elif args.sealed or args.raw:
+        raise ValueError("Provide both --sealed and --raw (or neither to use the repo demo Track A).")
+    else:
+        # Plan.md expects a fresh-checkout smoke command that works without
+        # specifying `--sealed/--raw`. Default to the included demo Track A.
+        repo_root = Path(__file__).resolve().parents[3]
+        sealed_path = repo_root / "provetok" / "data" / "sealed" / "micro_history_a.sealed.jsonl"
+        raw_path = repo_root / "provetok" / "data" / "raw" / "micro_history_a.jsonl"
+
+    sealed = load_records(sealed_path)
+    raw = load_records(raw_path)
 
     env = BenchmarkEnvironment(
         sealed_records=sealed,
@@ -269,16 +281,17 @@ def main():
 
     # --- run ---
     p_run = sub.add_parser("run", help="Run benchmark simulation")
-    p_run.add_argument("--sealed", required=True)
-    p_run.add_argument("--raw", required=True)
+    p_run.add_argument("--sealed", default=None, help="Sealed JSONL path (defaults to the repo demo Track A).")
+    p_run.add_argument("--raw", default=None, help="Raw JSONL path (defaults to the repo demo Track A).")
     p_run.add_argument("--config", default=None)
     p_run.add_argument(
         "--agent",
+        "--baseline",
         choices=["llm", "random", "copylast", "dependency", "frontier"],
         default="llm",
     )
     p_run.add_argument("--audit_report", default=None)
-    p_run.add_argument("--output", default="eval_report.json")
+    p_run.add_argument("--output", "--out", default="eval_report.json")
 
     # --- all ---
     p_all = sub.add_parser("all", help="Run full pipeline: seal -> audit -> run")

@@ -39,3 +39,71 @@
 - Residual risk notes retained in docs:
   - holdout Track B black-box trend is non-improving (`runs/EXP-019/summary.json`)
   - scaled human-eval kappa remains low (`runs/EXP-020/human_eval_report.json`)
+
+## 2026-02-10 (ABC Rerun)
+- Decision: No `docs/plan.md` rewrite needed.
+- Reason: Reran `EXP-001..020` + `pytest`; claim verdicts remain supported and evidence docs were refreshed (`docs/experiment.md`, `docs/verify_log.md`, `docs/claim_evidence.md`).
+- Evidence snapshot:
+  - `runs/EXP-005/gate_no_try.log`
+  - `runs/EXP-007/pytest.log`
+  - `runs/exports/0.2.0-legacy/public/dataset_manifest.json`
+  - `runs/EXP-011/summary.json`
+  - `runs/EXP-016/summary.json`
+  - `runs/EXP-019/summary.json`
+- Notes:
+  - ORAL-009 holdout now reports `black_box_trend_holds_all_tracks=true` with `avg_utility_retention=0.9382` (`runs/EXP-019/summary.json`); the 2026-02-06 Track B note above is historical.
+
+## 2026-02-11 (Scale Evidence Map)
+- Decision: Updated `docs/plan.md` Evidence Map so oral claims explicitly point to both micro and scale artifacts (micro mechanism + non-toy scale replication).
+- Reason: Oral/paper narrative requires micro-history diagnostics AND scale replication for the same analysis blocks (ablations/cross-domain/defense/stats/budget/holdout).
+- Evidence snapshot:
+  - `runs/EXP-021/dataset/dataset_manifest.json`
+  - `runs/EXP-022/main_results.csv`
+  - `runs/EXP-023/tradeoff_curve.json`
+  - `runs/EXP-025/ablation_results.csv`
+  - `runs/EXP-026/cross_domain_summary.json`
+  - `runs/EXP-027/summary.json`
+  - `runs/EXP-028/summary.json`
+  - `runs/EXP-029/budget_curves.json`
+  - `runs/EXP-030/summary.json`
+
+## 2026-02-11 (ArXiv-Aligned Oral Closure)
+- Decision: No `docs/plan.md` rewrite needed; extended evidence mapping with ORAL-011..015 supported by full runs.
+- Reason: `EXP-034..038` all completed with `Smoke=[x], Full=[x]` and machine-checkable summary/run_meta artifacts.
+- Evidence snapshot:
+  - `runs/EXP-034/summary.json`
+  - `runs/EXP-035/summary.json`
+  - `runs/EXP-036/summary.json`
+  - `runs/EXP-037/summary.json`
+  - `runs/EXP-038/summary.json`
+- Notes:
+  - Updated `docs/experiment.md` mapping states ORAL-011..015 as evidenced.
+  - Added ORAL-011..015 rows to `docs/claim_evidence.md` with concrete metric summaries.
+
+## 2026-02-11 (Plan Evidence Map: ORAL-011..015)
+- Rationale: User requested formal inclusion of the new arXiv-aligned oral items in `docs/plan.md` Claim/Evidence Map after full runs completed.
+- Changes:
+  - Before: >
+      `docs/plan.md` Evidence Map ended at ORAL-010 and did not define measurable checks for ORAL-011..015.
+  - After: >
+      Added ORAL-011..015 entries to `docs/plan.md` Evidence Map, each with explicit Metrics/Checks and direct artifact keys/paths mapped to `EXP-034..038`.
+- Evidence snapshot:
+  - `runs/EXP-034/summary.json`
+  - `runs/EXP-035/summary.json`
+  - `runs/EXP-036/summary.json`
+  - `runs/EXP-037/summary.json`
+  - `runs/EXP-038/summary.json`
+
+## 2026-02-11 (Validity / ORAL-016)
+- Decision: Added ORAL-016 validity item to `docs/plan.md` and closed it with a runnable invariance experiment (`EXP-039`).
+- Reason: Address “validity / metadata shortcut” criticism by measuring raw↔sealed ordering invariance and including metadata-only / structure-only sanity baselines.
+- Evidence snapshot:
+  - `runs/EXP-039/summary.json`
+  - `runs/EXP-039/run_meta.json`
+
+## 2026-02-11 (ORAL-016: LLM Validity / Invariance)
+- Decision: Added `EXP-040` as additional evidence for ORAL-016.
+- Reason: Re-check invariance + shortcut baselines with a temperature-0 LLM proposer across raw/sealed/structure_only/metadata_only views (not only heuristic agents).
+- Evidence snapshot:
+  - `runs/EXP-040/summary.json`
+  - `runs/EXP-040/run_meta.json`

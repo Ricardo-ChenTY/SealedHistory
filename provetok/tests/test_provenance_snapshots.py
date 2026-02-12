@@ -21,12 +21,14 @@ def test_offline_online_build_adds_snapshot_refs():
             "dataset_version": "offline-online-test",
             "export_root": str(out_root),
             "tracks": {
-                "A": {"core_size": 2, "extended_size": 2, "openalex": {"concepts": [], "keywords": [], "venues": []}},
+                "A": {
+                    "core_size": 2,
+                    "extended_size": 2,
+                    "s2": {"keywords": [], "fields_of_study": ["Computer Science"], "year_from": 2009, "year_to": 2025},
+                },
             },
             "sources": {
-                "openalex": {"base_url": "https://api.openalex.org", "mailto": "", "per_page": 1, "max_pages": 1, "rate_limit_qps": 1},
                 "s2": {"base_url": "https://api.semanticscholar.org/graph/v1", "api_key_env": "S2_API_KEY", "rate_limit_qps": 1},
-                "opencitations": {"enable": False},
             },
             "selection": {
                 "topic_coverage_k": 1,
@@ -62,33 +64,31 @@ def test_offline_online_build_adds_snapshot_refs():
             / dataset_version
             / "private"
             / "raw_snapshots"
-            / "openalex"
+            / "s2"
             / "works_track_A.jsonl"
         )
         works_path.parent.mkdir(parents=True, exist_ok=True)
 
         works = [
             {
-                "id": "https://openalex.org/W1",
+                "paperId": "1111111111111111111111111111111111111111",
                 "title": "Paper One",
-                "publication_year": 2020,
-                "doi": None,
-                "ids": {},
-                "concepts": [{"id": "https://openalex.org/C1"}],
-                "cited_by_count": 10,
-                "referenced_works": [],
-                "abstract_inverted_index": {"We": [0], "study": [1], "models": [2]},
+                "year": 2020,
+                "citationCount": 10,
+                "references": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "We study models",
             },
             {
-                "id": "https://openalex.org/W2",
+                "paperId": "2222222222222222222222222222222222222222",
                 "title": "Paper Two",
-                "publication_year": 2021,
-                "doi": None,
-                "ids": {},
-                "concepts": [{"id": "https://openalex.org/C2"}],
-                "cited_by_count": 5,
-                "referenced_works": ["https://openalex.org/W1"],
-                "abstract_inverted_index": {"We": [0], "extend": [1], "methods": [2]},
+                "year": 2021,
+                "citationCount": 5,
+                "references": [{"paperId": "1111111111111111111111111111111111111111"}],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "We extend methods",
             },
         ]
         works_path.write_text("\n".join(json.dumps(w, ensure_ascii=False) for w in works) + "\n", encoding="utf-8")
@@ -100,6 +100,5 @@ def test_offline_online_build_adds_snapshot_refs():
         rec = json.loads(line)
 
         snap = (rec.get("provenance") or {}).get("snapshot_refs") or {}
-        openalex_sha = snap.get("openalex_work_sha256") or ""
-        assert isinstance(openalex_sha, str) and len(openalex_sha) == 64
-
+        source_sha = snap.get("source_work_sha256") or ""
+        assert isinstance(source_sha, str) and len(source_sha) == 64

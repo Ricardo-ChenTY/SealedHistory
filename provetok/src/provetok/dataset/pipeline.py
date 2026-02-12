@@ -1,4 +1,4 @@
-"""Online dataset pipeline (OpenAlex/S2/OC/arXiv).
+"""Online dataset pipeline (S2/arXiv).
 
 This pipeline is best-effort: it aims to produce all plan.md artifacts, while
 remaining runnable without network (via `--offline` and cached snapshots).
@@ -16,24 +16,26 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from provetok.data.schema_v2 import PaperRecordInternalV2, save_records_internal_v2, save_records_v2
+from provetok.data.schema_v2 import (
+    PaperRecordInternalV2,
+    load_records_internal_v2,
+    save_records_internal_v2,
+    save_records_v2,
+)
 from provetok.dataset.fulltext import cache_fulltext_for_mapping_rows, write_fulltext_index_for_mapping_rows
 from provetok.dataset.formula_graph import extract_formula_graph_from_source_paths
 from provetok.dataset.legacy import default_taxonomy
 from provetok.dataset.paths import DatasetPaths
-from provetok.dataset.record_builder import RecordBuildError, build_record_v2_from_abstract
+from provetok.dataset.record_builder import build_record_v2_from_abstract
 from provetok.dataset.selection import (
     assign_local_ids,
     derive_dependency_closed_core_paper_ids,
     load_manual_decisions,
-    manual_lookup_keys,
     match_manual_decision,
-    parse_openalex_work,
+    parse_s2_work,
     select_works,
 )
 from provetok.sources.http import SnapshotWriter
-from provetok.sources.openalex_client import OpenAlexClient, OpenAlexConfig
-from provetok.sources.opencitations_client import OpenCitationsClient, OpenCitationsConfig
 from provetok.sources.s2_client import S2Client, S2Config
 from provetok.utils.llm_client import LLMClient, LLMConfig
 
@@ -75,7 +77,7 @@ def _append_jsonl(path: Path, row: Dict[str, Any]) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _load_openalex_snapshot(path: Path) -> List[Dict[str, Any]]:
+def _load_jsonl_snapshot(path: Path) -> List[Dict[str, Any]]:
     works: List[Dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -85,46 +87,49 @@ def _load_openalex_snapshot(path: Path) -> List[Dict[str, Any]]:
     return works
 
 
-def _openalex_inverted_abstract(w: Dict[str, Any]) -> str:
-    """Reconstruct abstract from OpenAlex inverted index if present."""
-    inv = w.get("abstract_inverted_index")
-    if not isinstance(inv, dict):
-        return ""
-    # inv: {token: [pos,...]}
-    positions: Dict[int, str] = {}
-    for token, pos_list in inv.items():
-        if not isinstance(pos_list, list):
-            continue
-        for p in pos_list:
-            if isinstance(p, int):
-                positions[p] = token
-    if not positions:
-        return ""
-    return " ".join(positions[i] for i in sorted(positions))
+def _build_s2_query(track_cfg: Dict[str, Any], *, track_id: str) -> Dict[str, Any]:
+    """Build S2 query parameters from track config."""
+    s2 = track_cfg.get("s2") or {}
 
+    keywords = [str(x).strip() for x in (s2.get("keywords") or []) if str(x).strip()]
+    query = str(s2.get("query") or "").strip()
+    if not query:
+        # Keep query simple for broad gateway compatibility.
+        query = keywords[0] if keywords else ""
+    if not query:
+        # Safe fallback: keep query deterministic even when config omits keywords.
+        query = "computer vision transformers" if track_id == "A" else "language model transformers"
 
-def _build_openalex_filter(track_cfg: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """Return (filter_str, search_str)."""
-    oa = track_cfg.get("openalex") or {}
-    concepts = [str(x) for x in (oa.get("concepts") or []) if x]
-    venues = [str(x) for x in (oa.get("venues") or []) if x]
-    keywords = [str(x) for x in (oa.get("keywords") or []) if x]
-    year_from = oa.get("year_from")
-    year_to = oa.get("year_to")
+    fos = s2.get("fields_of_study") or []
+    if isinstance(fos, str):
+        fos = [fos]
+    fos = [str(x).strip() for x in fos if str(x).strip()]
+    fields_of_study = ",".join(fos) if fos else ""
 
-    parts: List[str] = []
-    if concepts:
-        parts.append("concept.id:" + "|".join(concepts))
-    if venues:
-        parts.append("host_venue.id:" + "|".join(venues))
-    if year_from:
-        parts.append(f"from_publication_date:{int(year_from)}-01-01")
-    if year_to:
-        parts.append(f"to_publication_date:{int(year_to)}-12-31")
+    year_from = _parse_int(s2.get("year_from"))
+    year_to = _parse_int(s2.get("year_to"))
+    year = ""
+    if year_from is not None and year_to is not None:
+        year = f"{year_from}-{year_to}"
+    elif year_from is not None:
+        year = f"{year_from}-"
+    elif year_to is not None:
+        year = f"-{year_to}"
 
-    filter_str = ",".join(parts) if parts else None
-    search_str = " ".join(keywords) if keywords else None
-    return filter_str, search_str
+    min_citation_count = _parse_int(s2.get("min_citation_count"))
+    open_access_pdf_only = bool(s2.get("open_access_pdf_only", False))
+    max_results = _parse_int(s2.get("max_results"))
+    if max_results is None or max_results <= 0:
+        max_results = 10000
+
+    return {
+        "query": query,
+        "fields_of_study": fields_of_study,
+        "year": year,
+        "min_citation_count": min_citation_count,
+        "open_access_pdf_only": open_access_pdf_only,
+        "max_results": int(max_results),
+    }
 
 
 def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: bool, track: str) -> None:
@@ -139,30 +144,26 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         return hashlib.sha256(blob).hexdigest()
 
     sources_cfg = raw_cfg.get("sources") or {}
-    oa_cfg_raw = sources_cfg.get("openalex") or {}
     s2_cfg_raw = sources_cfg.get("s2") or {}
-    oc_cfg_raw = (sources_cfg.get("opencitations") or {}) if isinstance(sources_cfg, dict) else {}
-    oc_enable = bool(oc_cfg_raw.get("enable", False))
-    oc_tiers_raw = oc_cfg_raw.get("tiers") or ["core"]
-    if not isinstance(oc_tiers_raw, list):
-        oc_tiers_raw = [oc_tiers_raw]
-    oc_tiers = [str(x) for x in oc_tiers_raw if x]
-
-    openalex_cfg = OpenAlexConfig(
-        base_url=str(oa_cfg_raw.get("base_url", "https://api.openalex.org")),
-        mailto=str(oa_cfg_raw.get("mailto", "")),
-        per_page=int(oa_cfg_raw.get("per_page", 200)),
-        max_pages=int(oa_cfg_raw.get("max_pages", 50)),
-        rate_limit_qps=float(oa_cfg_raw.get("rate_limit_qps", 3.0)),
-    )
+    primary_source = str(sources_cfg.get("primary", "s2")).strip().lower()
+    if primary_source != "s2":
+        logger.warning("Unsupported sources.primary=%s; forcing s2 mode", primary_source)
+        primary_source = "s2"
+    logger.info("Dataset online source backend: %s", primary_source)
 
     s2_api_key_env = str(s2_cfg_raw.get("api_key_env", "S2_API_KEY"))
     s2_api_key = os.environ.get(s2_api_key_env, "")
     s2_cfg = S2Config(
-        base_url=str(s2_cfg_raw.get("base_url", "https://api.semanticscholar.org/graph/v1")),
+        base_url=str(s2_cfg_raw.get("base_url", "https://ai4scholar.net/graph/v1")),
         api_key=s2_api_key,
         rate_limit_qps=float(s2_cfg_raw.get("rate_limit_qps", 1.0)),
     )
+    s2_enable_batch_enrich = bool(s2_cfg_raw.get("enable_batch_enrich", True))
+    s2_batch_chunk = int(s2_cfg_raw.get("batch_chunk_size", 500) or 500)
+    if s2_batch_chunk <= 0:
+        s2_batch_chunk = 500
+    if s2_batch_chunk > 500:
+        s2_batch_chunk = 500
 
     manual_path = str((raw_cfg.get("selection") or {}).get("manual_decisions_file") or "")
     manual_decisions = load_manual_decisions(Path(manual_path)) if manual_path else {}
@@ -172,7 +173,6 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
     centrality_weights = dict(sel_cfg.get("centrality_weights") or {"pagerank": 1.0, "indegree": 0.5})
 
     track_cfg = raw_cfg.get("tracks") or {}
-    sizes_by_track: Dict[str, Dict[str, int]] = {}
 
     selection_rows_by_tier: Dict[str, List[Dict[str, Any]]] = {"extended": [], "core": []}
     dep_edges_by_tier: Dict[str, List[str]] = {"extended": [], "core": []}
@@ -224,6 +224,15 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 break
         if s.lower().startswith("doi:"):
             s = s[4:]
+        return s.strip().lower()
+
+    def _normalize_arxiv_id(arxiv_id: Optional[str]) -> str:
+        s = str(arxiv_id or "").strip()
+        if not s:
+            return ""
+        low = s.lower()
+        if low.startswith("arxiv:"):
+            s = s[6:]
         return s.strip().lower()
 
     # ------------------------------------------------------------------
@@ -290,6 +299,9 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
     if batch_size <= 0:
         batch_size = 8
 
+    run_cfg = raw_cfg.get("run") or {}
+    resume_from_checkpoint = bool(run_cfg.get("resume_from_checkpoint", True))
+
     extended_selected_all: List[Dict[str, Any]] = []
     core_selected_all: List[Dict[str, Any]] = []
 
@@ -299,51 +311,66 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         extended_size = int(cfg_t.get("extended_size") or cfg_t.get("target_max") or cfg_t.get("target_min") or 40)
         if extended_size < core_size:
             extended_size = core_size
-        sizes_by_track[t] = {"core_size": core_size, "extended_size": extended_size}
-
-        works_snapshot_dir = paths.private_dir / "raw_snapshots" / "openalex"
-        works_snapshot_path = works_snapshot_dir / f"works_track_{t}.jsonl"
-        works_snapshot_dir.mkdir(parents=True, exist_ok=True)
-
-        oa_requests_path = works_snapshot_dir / f"requests_track_{t}.jsonl"
-        if not oa_requests_path.exists():
-            oa_requests_path.write_text("", encoding="utf-8")
-        elif not offline:
-            oa_requests_path.write_text("", encoding="utf-8")
-
-        if oc_enable:
-            oc_requests_path = paths.private_dir / "raw_snapshots" / "opencitations" / f"requests_track_{t}.jsonl"
-            oc_requests_path.parent.mkdir(parents=True, exist_ok=True)
-            if not oc_requests_path.exists():
-                oc_requests_path.write_text("", encoding="utf-8")
-            elif not offline:
-                oc_requests_path.write_text("", encoding="utf-8")
+        s2_snapshot_dir = paths.private_dir / "raw_snapshots" / "s2"
+        s2_snapshot_path = s2_snapshot_dir / f"works_track_{t}.jsonl"
+        s2_requests_path = s2_snapshot_dir / f"requests_track_{t}.jsonl"
+        # Legacy offline compatibility: always materialize the OpenAlex snapshot paths
+        # (even if OpenAlex is not used by the pipeline). These may be empty.
+        oa_snapshot_dir = paths.private_dir / "raw_snapshots" / "openalex"
+        oa_works_path = oa_snapshot_dir / f"works_track_{t}.jsonl"
+        oa_requests_path = oa_snapshot_dir / f"requests_track_{t}.jsonl"
+        ckpt_dir = paths.private_dir / "checkpoints"
+        ckpt_rows_path = ckpt_dir / f"track_{t}_extended_rows.jsonl"
+        ckpt_records_path = ckpt_dir / f"track_{t}_extended_records.internal.jsonl"
+        resume_ckpt_available = bool(
+            resume_from_checkpoint and ckpt_rows_path.exists() and ckpt_records_path.exists()
+        )
+        s2_snapshot_dir.mkdir(parents=True, exist_ok=True)
+        oa_snapshot_dir.mkdir(parents=True, exist_ok=True)
+        for p in (oa_works_path, oa_requests_path):
+            if not p.exists():
+                p.write_text("", encoding="utf-8")
+        if not s2_requests_path.exists():
+            s2_requests_path.write_text("", encoding="utf-8")
+        elif not offline and not resume_ckpt_available:
+            s2_requests_path.write_text("", encoding="utf-8")
+        s2_snap = SnapshotWriter(s2_requests_path, "s2")
+        s2 = S2Client(s2_cfg, snapshot=s2_snap)
 
         works: List[Dict[str, Any]] = []
         if offline:
-            if not works_snapshot_path.exists():
-                raise FileNotFoundError(f"Offline mode: missing {works_snapshot_path}")
-            works = _load_openalex_snapshot(works_snapshot_path)
-            logger.info("Loaded %d OpenAlex works from snapshot for track %s", len(works), t)
+            if s2_snapshot_path.exists():
+                works = _load_jsonl_snapshot(s2_snapshot_path)
+                logger.info("Loaded %d S2 works from snapshot for track %s", len(works), t)
+            else:
+                raise FileNotFoundError(f"Offline mode: missing {s2_snapshot_path}")
+        elif resume_ckpt_available and s2_snapshot_path.exists():
+            works = _load_jsonl_snapshot(s2_snapshot_path)
+            logger.info("Resume mode: loaded %d S2 works from snapshot for track %s", len(works), t)
         else:
-            # Truncate snapshot for deterministic reruns within the same export dir.
-            works_snapshot_path.write_text("", encoding="utf-8")
-            snap_log = SnapshotWriter(
-                oa_requests_path,
-                "openalex",
+            s2_snapshot_path.write_text("", encoding="utf-8")
+            s2_query = _build_s2_query(cfg_t, track_id=t)
+            fields = (
+                "paperId,title,abstract,year,venue,authors,citationCount,"
+                "fieldsOfStudy,externalIds,url,openAccessPdf"
             )
-            client = OpenAlexClient(openalex_cfg, snapshot=snap_log)
-            filter_str, search_str = _build_openalex_filter(cfg_t)
-            select = "id,title,publication_year,doi,ids,concepts,cited_by_count,referenced_works,abstract_inverted_index"
-            for w in client.iter_works(filter_str=filter_str, search=search_str, select=select):
+            for w in s2.iter_search_bulk(
+                query=str(s2_query["query"]),
+                fields=fields,
+                year=str(s2_query["year"] or ""),
+                fields_of_study=str(s2_query["fields_of_study"] or ""),
+                min_citation_count=s2_query["min_citation_count"],
+                open_access_pdf=bool(s2_query["open_access_pdf_only"]),
+                max_results=int(s2_query["max_results"]),
+            ):
                 works.append(w)
-                with open(works_snapshot_path, "a", encoding="utf-8") as f:
+                with open(s2_snapshot_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(w, ensure_ascii=False) + "\n")
-            logger.info("Fetched %d OpenAlex works for track %s", len(works), t)
+            logger.info("Fetched %d S2 works for track %s", len(works), t)
 
-        candidates = [parse_openalex_work(w) for w in works if w.get("id")]
+        candidates = [parse_s2_work(w) for w in works if w.get("paperId")]
         if not candidates:
-            logger.warning("No OpenAlex candidates for track %s", t)
+            logger.warning("No candidates for track %s", t)
             continue
 
         def manual_decision_for_candidate(cand: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -381,9 +408,9 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
         pool_size = max(extended_size, int(round(extended_size * pool_mult)))
         pool_size = max(1, min(pool_size, len(candidates)))
 
-        oa_ref_year = _parse_int(((cfg_t.get("openalex") or {}).get("year_to") or 0) or 0)
-        if oa_ref_year == 0:
-            oa_ref_year = None
+        ref_year = _parse_int(((cfg_t.get("s2") or {}).get("year_to") or 0) or 0)
+        if ref_year == 0:
+            ref_year = None
 
         selected_pool, selection_signals = select_works(
             candidates,
@@ -392,7 +419,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             topic_coverage_k=topic_k,
             centrality_weights=centrality_weights,
             manual_decisions=manual_decisions,
-            ref_year=oa_ref_year,
+            ref_year=ref_year,
             return_signals=True,
         )
         oa_to_pid = assign_local_ids(selected_pool, track_prefix=t)
@@ -427,21 +454,44 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     }
                 )
 
-        # Prepare S2 client for metadata enrichment (DOI/arXiv/openAccessPdf).
-        s2_requests_path = paths.private_dir / "raw_snapshots" / "s2" / f"requests_track_{t}.jsonl"
-        s2_requests_path.parent.mkdir(parents=True, exist_ok=True)
-        if not s2_requests_path.exists():
-            s2_requests_path.write_text("", encoding="utf-8")
-        elif not offline:
-            s2_requests_path.write_text("", encoding="utf-8")
-        s2_snap = SnapshotWriter(s2_requests_path, "s2")
-        s2 = S2Client(s2_cfg, snapshot=s2_snap)
+        # S2 client is initialized at the beginning of each track loop and reused
+        # for both candidate retrieval and metadata enrichment.
 
         accepted_ext_rows: List[Dict[str, Any]] = []
         accepted_ext_records: Dict[str, PaperRecordInternalV2] = {}
+        accepted_openalex_ids: set[str] = set()
+
+        if resume_ckpt_available:
+            ckpt_rows = _load_jsonl_snapshot(ckpt_rows_path)
+            ckpt_records = load_records_internal_v2(ckpt_records_path)
+            rec_by_pid = {str(r.public.paper_id or ""): r for r in ckpt_records if r.public.paper_id}
+            for row in ckpt_rows:
+                pid = str(row.get("paper_id") or "")
+                rec = rec_by_pid.get(pid)
+                if not pid or rec is None:
+                    continue
+                accepted_ext_rows.append(row)
+                accepted_ext_records[pid] = rec
+                oaid = str(row.get("openalex_id") or "")
+                if oaid:
+                    accepted_openalex_ids.add(oaid)
+            logger.info(
+                "Resumed %d accepted rows from checkpoint for track %s",
+                len(accepted_ext_rows),
+                t,
+            )
+
+        def append_resume_checkpoint(row: Dict[str, Any], rec: PaperRecordInternalV2) -> None:
+            if not resume_from_checkpoint:
+                return
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            with open(ckpt_rows_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            with open(ckpt_records_path, "a", encoding="utf-8") as f:
+                f.write(rec.to_json() + "\n")
 
         def process_batch(rows: List[Dict[str, Any]]) -> None:
-            nonlocal accepted_ext_rows, accepted_ext_records
+            nonlocal accepted_ext_rows, accepted_ext_records, accepted_openalex_ids
             updated = cache_fulltext_for_mapping_rows(
                 raw_cfg,
                 paths=paths,
@@ -542,6 +592,10 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
 
                 accepted_ext_rows.append(row)
                 accepted_ext_records[paper_id] = rec
+                oaid = str(row.get("openalex_id") or "")
+                if oaid:
+                    accepted_openalex_ids.add(oaid)
+                append_resume_checkpoint(row, rec)
                 selection_rows_by_tier["extended"].append(
                     {
                         "ts_unix": int(time.time()),
@@ -561,11 +615,50 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                     }
                 )
 
+        s2_meta_by_id: Dict[str, Dict[str, Any]] = {}
+        s2_meta_by_doi: Dict[str, Dict[str, Any]] = {}
+        s2_meta_by_arxiv: Dict[str, Dict[str, Any]] = {}
+        if (not offline) and selected_pool and s2_enable_batch_enrich and len(accepted_ext_rows) < extended_size:
+            batch_ids: List[str] = []
+            for c in selected_pool:
+                if str(c.openalex_id) in accepted_openalex_ids:
+                    continue
+                if c.s2_id:
+                    batch_ids.append(c.s2_id)
+                elif c.doi:
+                    batch_ids.append(f"DOI:{c.doi}")
+                elif c.arxiv_id:
+                    batch_ids.append(f"ARXIV:{c.arxiv_id}")
+
+            batch_fields = (
+                "paperId,title,abstract,year,venue,authors,citationCount,references,"
+                "fieldsOfStudy,externalIds,url,openAccessPdf"
+            )
+            for meta in s2.iter_paper_batch(batch_ids, fields=batch_fields, chunk_size=s2_batch_chunk):
+                pid = str(meta.get("paperId") or "").strip()
+                if pid:
+                    s2_meta_by_id[pid] = meta
+
+                ext = meta.get("externalIds") or {}
+                if isinstance(ext, dict):
+                    doi_norm = _normalize_doi(ext.get("DOI") or ext.get("Doi"))
+                    if doi_norm:
+                        s2_meta_by_doi[doi_norm] = meta
+                    arxiv_norm = _normalize_arxiv_id(ext.get("ArXiv") or ext.get("arXiv"))
+                    if arxiv_norm:
+                        s2_meta_by_arxiv[arxiv_norm] = meta
+
+            logger.info("Batch-enriched %d selected papers for track %s", len(s2_meta_by_id), t)
+        elif (not offline) and selected_pool and (not s2_enable_batch_enrich) and len(accepted_ext_rows) < extended_size:
+            logger.info("Batch enrichment disabled for track %s; using search/bulk metadata only", t)
+
         pending: List[Dict[str, Any]] = []
 
         for c in selected_pool:
             if len(accepted_ext_rows) >= extended_size:
                 break
+            if str(c.openalex_id) in accepted_openalex_ids:
+                continue
 
             paper_id = oa_to_pid[c.openalex_id]
 
@@ -574,35 +667,41 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 if ref in oa_to_pid:
                     deps.append(oa_to_pid[ref])
 
-            abstract = _openalex_inverted_abstract(c.raw)
-            abstract_source = "openalex" if abstract else ""
-
             s2_meta: Optional[Dict[str, Any]] = None
-            s2_meta_sha256: Optional[str] = None
-            if not offline:
-                key = c.doi or (c.arxiv_id or "")
-                if key:
-                    s2_meta = s2.get_paper(key)
-                if not s2_meta and c.title:
-                    search = s2.search(c.title, limit=1) or {}
-                    data = search.get("data") or []
-                    if isinstance(data, list) and data and isinstance(data[0], dict):
-                        s2_meta = data[0]
-                if s2_meta and isinstance(s2_meta, dict):
-                    s2_meta_sha256 = _sha256_json(s2_meta)
+            meta_from_batch = False
+            if c.s2_id and c.s2_id in s2_meta_by_id:
+                s2_meta = s2_meta_by_id[c.s2_id]
+                meta_from_batch = True
+            if s2_meta is None:
+                doi_norm = _normalize_doi(c.doi)
+                if doi_norm and doi_norm in s2_meta_by_doi:
+                    s2_meta = s2_meta_by_doi[doi_norm]
+                    meta_from_batch = True
+            if s2_meta is None:
+                arxiv_norm = _normalize_arxiv_id(c.arxiv_id)
+                if arxiv_norm and arxiv_norm in s2_meta_by_arxiv:
+                    s2_meta = s2_meta_by_arxiv[arxiv_norm]
+                    meta_from_batch = True
+            if s2_meta is None and isinstance(c.raw, dict):
+                s2_meta = dict(c.raw)
 
-            if s2_meta and not abstract:
-                abstract = str(s2_meta.get("abstract") or "")
-                abstract_source = "s2" if abstract else ""
+            s2_meta_sha256 = _sha256_json(s2_meta) if isinstance(s2_meta, dict) and s2_meta else None
+
+            abstract = str(c.raw.get("abstract") or "").strip()
+            abstract_source = "s2_search_bulk" if abstract else ""
+            if (not abstract) and isinstance(s2_meta, dict):
+                abstract = str(s2_meta.get("abstract") or "").strip()
+                if abstract:
+                    abstract_source = "s2_batch" if meta_from_batch else "s2_search_bulk"
 
             arxiv_id = c.arxiv_id
             doi = c.doi
-            s2_id = None
+            s2_id = c.s2_id or None
             author_pdf_url = None
             landing = None
             s2_refs: List[str] = []
-            if s2_meta and isinstance(s2_meta, dict):
-                s2_id = s2_meta.get("paperId") or None
+            if isinstance(s2_meta, dict):
+                s2_id = s2_meta.get("paperId") or s2_id
                 landing = s2_meta.get("url") or None
                 ext = s2_meta.get("externalIds") or {}
                 if isinstance(ext, dict):
@@ -623,7 +722,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 "paper_key": c.paper_key,
                 "track_id": t,
                 "openalex_id": c.openalex_id,
-                "openalex_work_sha256": _sha256_json(c.raw),
+                "source_work_sha256": _sha256_json(c.raw),
                 "doi": doi,
                 "arxiv_id": arxiv_id,
                 "s2_id": s2_id,
@@ -682,7 +781,7 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             rec.public.provenance["fulltext_source"] = row.get("fulltext_source")
             rec.public.provenance["fulltext_status"] = row.get("fulltext_status")
             snap_refs = {
-                "openalex_work_sha256": row.get("openalex_work_sha256"),
+                "source_work_sha256": row.get("source_work_sha256"),
                 "s2_meta_sha256": row.get("s2_meta_sha256"),
             }
             rec.public.provenance["snapshot_refs"] = {k: v for k, v in snap_refs.items() if v}
@@ -720,53 +819,6 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
             rr["tier"] = "core"
             rr["dependencies"] = [d for d in (rr.get("dependencies") or []) if d in core_set]
             core_rows.append(rr)
-
-        # Optional: enrich core with OpenCitations outgoing references (DOI->DOI).
-        if oc_enable and (not offline) and ("core" in oc_tiers):
-            oc_snap = SnapshotWriter(
-                paths.private_dir / "raw_snapshots" / "opencitations" / f"requests_track_{t}.jsonl",
-                "opencitations",
-            )
-            oc_client = OpenCitationsClient(
-                OpenCitationsConfig(
-                    base_url=str(oc_cfg_raw.get("base_url", "https://api.opencitations.net/index/v1")),
-                    rate_limit_qps=float(oc_cfg_raw.get("rate_limit_qps", 2.0)),
-                ),
-                snapshot=oc_snap,
-            )
-
-            doi_to_pid_core: Dict[str, str] = {}
-            for row in core_rows:
-                doi_norm = _normalize_doi(row.get("doi"))
-                pid = str(row.get("paper_id") or "")
-                if doi_norm and pid:
-                    doi_to_pid_core[doi_norm] = pid
-
-            for row in core_rows:
-                doi_norm = _normalize_doi(row.get("doi"))
-                if not doi_norm:
-                    continue
-
-                data = oc_client.references(doi_norm)
-                ref_dois: List[str] = []
-                if isinstance(data, list):
-                    for item in data:
-                        if not isinstance(item, dict):
-                            continue
-                        cited = item.get("cited") or item.get("cited_doi") or ""
-                        cited_norm = _normalize_doi(str(cited))
-                        if cited_norm:
-                            ref_dois.append(cited_norm)
-
-                seen: set[str] = set()
-                uniq: List[str] = []
-                for d in ref_dois:
-                    if d not in seen:
-                        seen.add(d)
-                        uniq.append(d)
-
-                row["oc_reference_dois"] = uniq
-                row["oc_reference_paper_ids"] = [doi_to_pid_core[d] for d in uniq if d in doi_to_pid_core]
 
         _write_jsonl(paths.private_mapping_path(t, "core"), core_rows)
 
@@ -877,6 +929,11 @@ def build_online_dataset(raw_cfg: Dict[str, Any], paths: DatasetPaths, offline: 
                 }
             )
         _write_jsonl(paths.private_track_papers_path(t), track_papers)
+
+        # Track completed successfully; clear resume checkpoints.
+        for p in (ckpt_rows_path, ckpt_records_path):
+            if p.exists():
+                p.unlink()
 
         # Dependency graph edges for core.
         for row in core_rows:

@@ -1,7 +1,7 @@
 """Legacy dataset export (PaperRecord -> PaperRecordV2).
 
 This is a pragmatic bridge: it allows offline use and tests while the full
-OpenAlex/S2/OC/fulltext pipeline is implemented.
+S2-first/OC/fulltext pipeline is implemented.
 """
 
 from __future__ import annotations

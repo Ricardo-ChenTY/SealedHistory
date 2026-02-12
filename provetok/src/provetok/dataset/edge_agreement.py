@@ -22,8 +22,11 @@ Edge = Tuple[str, str]  # (src_pid, dst_pid)
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    # Read by physical file lines only. `str.splitlines()` is too aggressive:
+    # it also splits on Unicode separators (e.g. U+2028) that may appear inside
+    # JSON string fields from upstream metadata.
+    for line in path.open("r", encoding="utf-8"):
+        line = line.rstrip("\r\n").strip()
         if not line:
             continue
         rows.append(json.loads(line))

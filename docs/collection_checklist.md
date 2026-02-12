@@ -4,7 +4,7 @@
 
 > 说明：仓库实现提供两条路径：  
 > - **Legacy（离线可跑）**：导出本地样例数据（用于 demo/测试）  
-> - **Online（联网）**：OpenAlex/S2 + selection +（可选）全文缓存 + v2 record 生成（用于正式采集）
+> - **Online（联网）**：S2-first + selection +（可选）全文缓存 + v2 record 生成（用于正式采集）
 
 ---
 
@@ -40,17 +40,17 @@ python3 -m venv .venv
 
 ## C. Phase 1：候选 works 抓取（C1，仅 online）
 
-### C1-01 OpenAlex works snapshot
+### C1-01 S2 works snapshot
 - 操作：`provetok dataset build --config provetok/configs/dataset.yaml --track both`
 - 输出（Private）：
-  - `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
-  - `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`
+  - `private/raw_snapshots/s2/works_track_{A,B}.jsonl`
+  - `private/raw_snapshots/s2/requests_track_{A,B}.jsonl`
 - 需要记录：请求参数 + `response_sha256`
-- 验收：works snapshot 行数 > 0，字段齐全（id/title/year/referenced_works）
+- 验收：works snapshot 行数 > 0，字段齐全（paperId/title/year/references）
 
-### C1-02 S2 enrichment snapshot
-- 输出（Private）：`private/raw_snapshots/s2/requests_track_{A,B}.jsonl`
-- 验收：能补齐部分 `doi/arxiv_id/abstract/references`
+### C1-02 Legacy OpenAlex 兼容快照（可选）
+- 输出（Private）：`private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
+- 用途：仅用于历史离线 fixture 兼容，不再作为在线主采集源
 
 ### C1-03 OpenCitations（可选）
 - 输出（Private）：`private/raw_snapshots/opencitations/*.jsonl`

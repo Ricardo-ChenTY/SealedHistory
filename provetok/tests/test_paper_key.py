@@ -9,6 +9,7 @@ from provetok.dataset.selection import (
     compute_paper_key,
     normalize_arxiv_id,
     normalize_doi,
+    normalize_s2_id,
     title_sha256_12,
 )
 
@@ -44,7 +45,18 @@ def test_compute_paper_key_openalex_fallback_has_title_hash():
     assert key.endswith(title_sha256_12("hello world"))
 
 
+def test_compute_paper_key_s2_when_no_doi_or_arxiv():
+    key = compute_paper_key(
+        doi="",
+        arxiv_id="",
+        openalex_id="",
+        s2_id="649def34f8be52c8b66281af98ae884c09aef38b",
+        title="Hello World",
+    )
+    assert key == "s2:649def34f8be52c8b66281af98ae884c09aef38b"
+
+
 def test_normalizers_are_stable():
     assert normalize_doi("DOI:10.1000/XYZ") == "10.1000/xyz"
     assert normalize_arxiv_id("arXiv:2101.12345v3") == "2101.12345v3"
-
+    assert normalize_s2_id("S2:649def34f8be52c8b66281af98ae884c09aef38b") == "649def34f8be52c8b66281af98ae884c09aef38b"

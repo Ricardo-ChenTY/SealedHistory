@@ -26,43 +26,32 @@
 
 ## 1. 外部来源数据（Raw，字段级要求）
 
-### 1.1 OpenAlex（主通路：works 元数据 + 引文边）
-**用途**：候选论文集合、概念标签、venue、引用关系（作为主图谱与 selection 输入）。
+### 1.1 Semantic Scholar（S2）（主通路：works 元数据 + 引文边）
+**用途**：候选论文集合、元数据补齐、引用关系（作为主图谱与 selection 输入）。
 
 **必须采集的 work 字段（最低要求）**
-- `id`（OpenAlex work id）
-- `title`
-- `publication_year`
-- `doi`（若有）
-- `ids.arxiv_id`（若有）
-- `concepts[].id`（用于 topic 覆盖约束；可选：display_name/score）
-- `cited_by_count`
-- `referenced_works[]`（引用的 OpenAlex work id 列表；用于建图）
-
-**可选但建议采集**
-- `abstract_inverted_index`（用于 record 抽取兜底；若缺则用 S2 abstract）
-- `host_venue` / `primary_location` / `open_access`（用于可访问性信号）
-
-**必须保存的 raw 快照附带信息**
-- query/filter/search/select/per-page/max_pages/cursor
-- `response_sha256`、`response_len`
-
-### 1.2 Semantic Scholar（S2）（交叉校验）
-**用途**：补齐 DOI/arXiv、abstract、references；作为第二来源引文边（用于一致率/覆盖率统计）。
-
-**必须采集字段（最低要求）**
 - `paperId`
 - `title`
-- `abstract`（如 OpenAlex 无 abstract 时兜底）
-- `year`, `venue`, `authors[].name`（用于归一化/对齐；注意：这些字段不得进入 Public record）
-- `references[].paperId`
+- `abstract`
+- `year`
+- `citationCount`
+- `references[].paperId`（用于建图）
 - `externalIds.DOI` / `externalIds.ArXiv`
-- `openAccessPdf.url`（若存在，用作“作者公开 PDF”候选 URL）
-- `url`（落地页；仅 Private）
+- `openAccessPdf.url`（作者公开 PDF 候选）
+- `fieldsOfStudy`
+
+**可选但建议采集**
+- `venue` / `authors[].name` / `url`
 
 **必须保存的 raw 快照附带信息**
-- 请求 paper key / query、fields 参数、是否使用 API key
+- query/fields/year/fieldsOfStudy/token
 - `response_sha256`、`response_len`
+
+### 1.2 OpenAlex（兼容通路，非主源）
+**用途**：仅用于历史离线 fixtures 兼容；在线主采集不再依赖。
+
+**兼容快照（可选）**
+- `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`
 
 ### 1.3 OpenCitations（可选第三来源校验）
 **用途**：DOI-to-DOI 引文边第三方校验，降低单源错误。
@@ -114,9 +103,9 @@
 
 ### 2.1 Raw snapshots（按来源分目录）
 必须保存以下快照文件（JSONL 追加写）：
-- `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`（候选 works 明细）
-- `private/raw_snapshots/openalex/requests_track_{A,B}.jsonl`（请求/响应元信息，含 hash）
+- `private/raw_snapshots/s2/works_track_{A,B}.jsonl`（候选 works 明细）
 - `private/raw_snapshots/s2/requests_track_{A,B}.jsonl`
+- `private/raw_snapshots/openalex/works_track_{A,B}.jsonl`（legacy 兼容，可选）
 - `private/raw_snapshots/opencitations/*.jsonl`（可选）
 
 ### 2.2 选取过程与映射（可审计）

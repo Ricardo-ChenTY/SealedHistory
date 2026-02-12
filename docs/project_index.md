@@ -12,6 +12,7 @@ This index documents the repository’s runnable entry points, configs, and arti
   - `docs/plan.md`: claims + evidence map + contracts (canonical)
   - `docs/mohu.md`: blocking gap tracker
   - `docs/experiment.md`: experiment matrix + run log
+  - `docs/neurips_strengthening.md`: “weaknesses → fixes” related-work/method/experiment design notes
   - `docs/data_requirements.md`: Public/Private artifact contract
   - `docs/collection_checklist.md`: executable release checklist
   - `docs/data_collection_proposal.md`: collection plan (sources/compliance)
@@ -40,6 +41,7 @@ Ignored/generated (see `.gitignore`):
 | Dataset build (CLI) | `provetok/src/provetok/dataset/build.py` + `provetok/src/provetok/dataset/pipeline.py` | `python -m provetok.cli dataset build --config provetok/configs/dataset.yaml [--offline] [--track A|B|both]` | `{export_root}/{dataset_version}/{public|private}/...` |
 | Dataset legacy export (CLI) | `provetok/src/provetok/dataset/build.py` + `provetok/src/provetok/dataset/legacy.py` | `python -m provetok.cli dataset export-legacy --config ... --track both` | tiered public/private layout (no manifest) |
 | v2 leakage audit (script) | `provetok/scripts/run_audit_v2.py` | `python provetok/scripts/run_audit_v2.py --sealed_jsonl ... --codebook_json ... --output ...` | audit report JSON |
+| Validity invariance (script) | `provetok/scripts/run_validity_invariance.py` | `python provetok/scripts/run_validity_invariance.py --dataset_dir runs/EXP-031/public --output_dir runs/EXP-039 --tracks A,B --agents random,copylast,dependency,frontier --seeds 11,22,33` | `runs/EXP-039/summary.json` + `run_meta.json` |
 
 ---
 
@@ -111,4 +113,3 @@ python -m provetok.cli dataset build \
   --track both \
   --out runs/exports
 ```
-

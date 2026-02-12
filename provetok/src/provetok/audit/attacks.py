@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -110,9 +111,31 @@ class TermRecoveryAttack:
 
     @staticmethod
     def _parse_guesses(text: str) -> List[str]:
-        # Keep parsing deterministic and failure-transparent: treat the response as a plain string.
-        # Structured parsing (and any recovery) must be handled outside the repository code.
-        return [str(text or "").strip()]
+        # Deterministic, no-exception parsing: extract up to 3 string guesses from a
+        # common "JSON list" response. If the model returns invalid JSON, we still
+        # try to recover something usable without `try/except`.
+        t = str(text or "").strip()
+
+        if "[" in t and "]" in t:
+            i = t.find("[")
+            j = t.rfind("]")
+            if 0 <= i < j:
+                t = t[i : j + 1]
+
+        out = [s.strip() for s in re.findall(r"\"([^\"]+)\"", t) if str(s or "").strip()]
+        if not out:
+            out = [s.strip() for s in re.findall(r"'([^']+)'", t) if str(s or "").strip()]
+        if out:
+            return out[:3]
+
+        parts = re.split(r"[,\n]+", t)
+        cleaned: List[str] = []
+        for p in parts:
+            s = str(p or "").strip()
+            s = re.sub(r"^(?:\\d+\\.|-)\\s*", "", s)
+            if s:
+                cleaned.append(s)
+        return cleaned[:3]
 
 
 # ======================================================================

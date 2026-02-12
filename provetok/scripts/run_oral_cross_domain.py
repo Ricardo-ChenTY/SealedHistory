@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Summarize cross-domain trends from EXP-011 outputs.")
+    parser = argparse.ArgumentParser(description="Summarize cross-domain trends from per-run metrics.")
     parser.add_argument("--input", default="runs/EXP-011/per_run_metrics.json")
     parser.add_argument("--output_dir", default="runs/EXP-014")
     args = parser.parse_args()
@@ -18,6 +18,7 @@ def main() -> None:
     rows = json.loads(src.read_text(encoding="utf-8"))
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    exp_id = out_dir.name
 
     tracks = sorted({r["track"] for r in rows})
     cfg_main = "sealed_frontier"
@@ -63,7 +64,9 @@ def main() -> None:
     json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     md_lines = [
-        "# Cross-Domain Generalization (EXP-014)",
+        f"# Cross-Domain Generalization ({exp_id})",
+        "",
+        f"- input: `{src}`",
         "",
         "| Track | Main Utility | Raw Utility | Utility Retention | Main Leakage (BB/WB) | Raw Leakage (BB/WB) | Trend Holds |",
         "|---|---:|---:|---:|---:|---:|---|",

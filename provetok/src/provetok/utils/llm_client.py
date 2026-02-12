@@ -29,9 +29,19 @@ class LLMConfig:
     def __post_init__(self):
         # Allow env-var override
         if not self.api_key:
-            self.api_key = os.environ.get("LLM_API_KEY", "")
+            self.api_key = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
         if not self.api_base:
-            self.api_base = os.environ.get("LLM_API_BASE", self.api_base)
+            self.api_base = os.environ.get("LLM_API_BASE", "") or os.environ.get("OPENAI_BASE_URL", self.api_base)
+        self.api_base = self._normalize_api_base(self.api_base)
+
+    @staticmethod
+    def _normalize_api_base(api_base: str) -> str:
+        s = str(api_base or "").strip().rstrip("/")
+        if not s:
+            return s
+        if s.endswith("/v1"):
+            return s
+        return s + "/v1"
 
 
 @dataclass

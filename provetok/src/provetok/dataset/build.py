@@ -36,6 +36,19 @@ def _write_json(path: Path, data: Any) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _iter_jsonl_lines(path: Path):
+    """Yield non-empty physical lines from JSONL file safely.
+
+    Do not use `splitlines()` here: upstream metadata may include Unicode line
+    separators inside JSON strings, and `splitlines()` would split those too.
+    """
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\r\n").strip()
+            if line:
+                yield line
+
+
 def _quantiles(xs: List[float], ps: List[float]) -> Dict[str, float]:
     if not xs:
         return {f"p{int(p * 100)}": 0.0 for p in ps}
@@ -68,10 +81,7 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
         has_s2 = 0
         has_fulltext = 0
 
-        for line in p.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        for line in _iter_jsonl_lines(p):
             row = json.loads(line)
             n += 1
 
@@ -113,7 +123,7 @@ def _compute_confidence_summary(paths: DatasetPaths, *, track: str, tier: str) -
 def _count_lines(path: Path) -> int:
     if not path.exists():
         return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    return sum(1 for _ in _iter_jsonl_lines(path))
 
 
 def _compute_formula_graph_summary(paths: DatasetPaths, *, track: str, tier: str) -> Dict[str, Any]:
@@ -142,10 +152,7 @@ def _compute_formula_graph_summary(paths: DatasetPaths, *, track: str, tier: str
             continue
 
         counts = init_counts()
-        for line in p.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        for line in _iter_jsonl_lines(p):
             row = json.loads(line)
 
             counts["n_rows"] += 1
@@ -207,10 +214,7 @@ def _selection_exclusion_breakdown(selection_log_path: Path, *, track_id: Option
     if not selection_log_path.exists():
         return {}
     counts: Dict[str, int] = {}
-    for line in selection_log_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    for line in _iter_jsonl_lines(selection_log_path):
         row = json.loads(line)
         if track_id and str(row.get("track_id") or "") != track_id:
             continue
@@ -281,10 +285,10 @@ def _enforce_qa_thresholds(raw_cfg: Dict[str, Any], *, qa_summary: Dict[str, Any
     if edge_req > 0.0:
         core_overall = (edge_agreement.get("core") or {}).get("overall") or {}
         n_edges = core_overall.get("n_edges") or {}
-        n_other = int(n_edges.get("s2", 0) or 0) + int(n_edges.get("opencitations", 0) or 0)
-        # If no cross-source edges are available (e.g., legacy/offline builds),
+        n_s2 = int(n_edges.get("s2", 0) or 0)
+        # If no S2 reference edges are available (e.g., legacy/offline builds),
         # the agreement metric is undefined; skip the gate.
-        if n_other > 0:
+        if n_s2 > 0:
             cov = (core_overall.get("coverage") or {}).get("openalex_by_union", 0.0)
             require_rate("core.edge_coverage.openalex_by_union", float(cov or 0.0), edge_req)
 
@@ -299,7 +303,7 @@ def build_dataset(
 
     This is the main entry point for implementing plan.md. For now, it supports
     an offline-friendly path via `record_build.mode=legacy_milestones` and a
-    full online path (OpenAlex/S2/OC/arXiv) implemented in submodules.
+    full online path (S2/arXiv) implemented in submodules.
     """
 
     cfg = load_dataset_config(config_path)

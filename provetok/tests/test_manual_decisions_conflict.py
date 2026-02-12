@@ -9,7 +9,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from provetok.dataset.build import build_dataset
-from provetok.dataset.selection import title_sha256_12
 
 
 def _write_jsonl(path: Path, rows) -> None:
@@ -21,22 +20,20 @@ def test_conflicting_manual_decisions_raise(tmp_path: Path) -> None:
     out_root = tmp_path / "exports"
     version = "test-manual-conflict"
 
-    canonical = (
-        "openalex:https://openalex.org/W1|title_sha256_12:" + title_sha256_12("Paper One")
-    )
+    s2_id = "1111111111111111111111111111111111111111"
     manual_path = tmp_path / "manual_decisions.jsonl"
     _write_jsonl(
         manual_path,
         [
             {
-                "paper_key": canonical,
+                "paper_key": f"s2:{s2_id}",
                 "action": "include",
                 "reason_tag": "manual_include_test",
                 "reviewer_id": "r1",
                 "evidence": "included by test",
             },
             {
-                "paper_key": "https://openalex.org/W1",
+                "paper_key": f"openalex:S2:{s2_id}",
                 "action": "exclude",
                 "reason_tag": "manual_exclude_test",
                 "reviewer_id": "r1",
@@ -56,10 +53,9 @@ def test_conflicting_manual_decisions_raise(tmp_path: Path) -> None:
                 '    name: "test"',
                 "    core_size: 1",
                 "    extended_size: 1",
-                "    openalex:",
-                "      concepts: []",
+                "    s2:",
                 "      keywords: []",
-                "      venues: []",
+                '      fields_of_study: ["Computer Science"]',
                 "      year_from: 2009",
                 "      year_to: 2025",
                 "selection:",
@@ -86,24 +82,22 @@ def test_conflicting_manual_decisions_raise(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    works_path = out_root / version / "private" / "raw_snapshots" / "openalex" / "works_track_A.jsonl"
+    works_path = out_root / version / "private" / "raw_snapshots" / "s2" / "works_track_A.jsonl"
     _write_jsonl(
         works_path,
         [
             {
-                "id": "https://openalex.org/W1",
+                "paperId": s2_id,
                 "title": "Paper One",
-                "publication_year": 2020,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C1"}],
-                "cited_by_count": 10,
-                "referenced_works": [],
-                "abstract_inverted_index": {"one": [0], "two": [1]},
+                "year": 2020,
+                "citationCount": 10,
+                "references": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "one two",
             }
         ],
     )
 
     with pytest.raises(ValueError):
         build_dataset(config_path=cfg_path, offline=True, out_root=out_root, track="A")
-

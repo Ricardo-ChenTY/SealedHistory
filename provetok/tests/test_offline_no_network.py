@@ -43,10 +43,9 @@ def test_offline_build_uses_no_network(monkeypatch, tmp_path: Path) -> None:
                 '    name: "test"',
                 "    core_size: 1",
                 "    extended_size: 1",
-                "    openalex:",
-                "      concepts: []",
+                "    s2:",
                 "      keywords: []",
-                "      venues: []",
+                '      fields_of_study: ["Computer Science"]',
                 "      year_from: 2009",
                 "      year_to: 2025",
                 "selection:",
@@ -72,31 +71,29 @@ def test_offline_build_uses_no_network(monkeypatch, tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    works_path = out_root / version / "private" / "raw_snapshots" / "openalex" / "works_track_A.jsonl"
+    works_path = out_root / version / "private" / "raw_snapshots" / "s2" / "works_track_A.jsonl"
     _write_jsonl(
         works_path,
         [
             {
-                "id": "https://openalex.org/W1",
+                "paperId": "1111111111111111111111111111111111111111",
                 "title": "Paper One",
-                "publication_year": 2020,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C1"}],
-                "cited_by_count": 10,
-                "referenced_works": [],
-                "abstract_inverted_index": {"one": [0], "two": [1]},
+                "year": 2020,
+                "citationCount": 10,
+                "references": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "one two",
             },
             {
-                "id": "https://openalex.org/W2",
+                "paperId": "2222222222222222222222222222222222222222",
                 "title": "Paper Two",
-                "publication_year": 2021,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C1"}],
-                "cited_by_count": 20,
-                "referenced_works": ["https://openalex.org/W1"],
-                "abstract_inverted_index": {"alpha": [0], "beta": [1]},
+                "year": 2021,
+                "citationCount": 20,
+                "references": [{"paperId": "1111111111111111111111111111111111111111"}],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "alpha beta",
             },
         ],
     )
@@ -105,4 +102,3 @@ def test_offline_build_uses_no_network(monkeypatch, tmp_path: Path) -> None:
 
     sel_path = out_root / version / "public" / "selection_log_extended.jsonl"
     assert sel_path.exists()
-

@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 
 def _read_rows(path: Path) -> list[dict]:
@@ -20,11 +22,96 @@ def _safe_float(v: str) -> float:
     return float(s)
 
 
+def _binarize(x: float, threshold: float) -> int:
+    return 1 if float(x) >= float(threshold) else 0
+
+
+def _krippendorff_alpha_nominal_binary(by_item: Dict[str, Dict[str, float]], *, threshold: float) -> Tuple[float, dict]:
+    # Nominal Krippendorff's alpha for binary labels (0/1) with missing values allowed.
+    # Uses coincidence-matrix formulation; for binary we can compute disagreement counts directly.
+    n0_total = 0
+    n1_total = 0
+    total_pairs = 0
+    disagree_pairs = 0
+    n_units_used = 0
+
+    for _, scores in by_item.items():
+        ys = [_binarize(v, threshold) for v in scores.values()]
+        if len(ys) < 2:
+            continue
+        n_units_used += 1
+        n1 = sum(ys)
+        n0 = len(ys) - n1
+        n0_total += n0
+        n1_total += n1
+        m = len(ys)
+        total_pairs += m * (m - 1)
+        disagree_pairs += 2 * n0 * n1
+
+    n_all = n0_total + n1_total
+    expected_pairs = n_all * (n_all - 1)
+    expected_disagree = 2 * n0_total * n1_total
+
+    do = (disagree_pairs / total_pairs) if total_pairs else 0.0
+    de = (expected_disagree / expected_pairs) if expected_pairs else 0.0
+    alpha = (1.0 - (do / de)) if de > 0 else 0.0
+
+    meta = {
+        "n_units_used": int(n_units_used),
+        "n_labels_total": int(n_all),
+        "observed_disagreement": round(float(do), 6),
+        "expected_disagreement": round(float(de), 6),
+    }
+    return float(alpha), meta
+
+
+def _pearson(xs: List[float], ys: List[float]) -> float:
+    if len(xs) != len(ys) or not xs:
+        return 0.0
+    mx = sum(xs) / len(xs)
+    my = sum(ys) / len(ys)
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    denx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    deny = math.sqrt(sum((y - my) ** 2 for y in ys))
+    return float(num / (denx * deny)) if denx > 0 and deny > 0 else 0.0
+
+
+def _ranks(vals: List[float]) -> List[float]:
+    # Average ranks for ties, 1-indexed.
+    idx = sorted(range(len(vals)), key=lambda i: vals[i])
+    out = [0.0] * len(vals)
+    i = 0
+    while i < len(vals):
+        j = i
+        while j + 1 < len(vals) and vals[idx[j + 1]] == vals[idx[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            out[idx[k]] = avg
+        i = j + 1
+    return out
+
+
+def _spearman(xs: List[float], ys: List[float]) -> float:
+    if len(xs) != len(ys) or not xs:
+        return 0.0
+    rx = _ranks(xs)
+    ry = _ranks(ys)
+    return _pearson(rx, ry)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compute Cohen's kappa for human eval.")
     parser.add_argument("--ratings_csv", default="docs/templates/human_eval_sheet.csv")
     parser.add_argument("--output_dir", default="runs/EXP-015")
     parser.add_argument("--threshold", type=float, default=0.5, help="overall >= threshold => accept")
+    parser.add_argument("--pair", nargs=2, default=None, help="Optional explicit rater pair for Cohen's kappa.")
+    parser.add_argument(
+        "--near_threshold_eps",
+        type=float,
+        default=0.05,
+        help="Report how many paired items fall within eps of the threshold for each rater.",
+    )
     args = parser.parse_args()
 
     ratings_csv = Path(args.ratings_csv)
@@ -55,7 +142,11 @@ def main() -> None:
     if len(raters) < 2:
         result["reason"] = "Need at least two raters."
     else:
-        r1, r2 = raters[:2]
+        if args.pair:
+            r1, r2 = str(args.pair[0]).strip(), str(args.pair[1]).strip()
+        else:
+            r1, r2 = raters[:2]
+
         paired = []
         for item, v in by_item.items():
             if r1 in v and r2 in v:
@@ -64,6 +155,8 @@ def main() -> None:
         if not paired:
             result["reason"] = f"No paired items between {r1} and {r2}."
         else:
+            xs = [float(s1) for _, s1, _ in paired]
+            ys = [float(s2) for _, _, s2 in paired]
             y1 = [1 if s1 >= args.threshold else 0 for _, s1, _ in paired]
             y2 = [1 if s2 >= args.threshold else 0 for _, _, s2 in paired]
             n = len(paired)
@@ -75,6 +168,11 @@ def main() -> None:
             p2_neg = 1.0 - p2_pos
             pe = p1_pos * p2_pos + p1_neg * p2_neg
             kappa = (po - pe) / (1.0 - pe) if (1.0 - pe) > 0 else 0.0
+            deltas = [float(a - b) for a, b in zip(xs, ys)]
+            abs_deltas = [abs(d) for d in deltas]
+            near_eps = float(args.near_threshold_eps)
+            near1 = sum(1 for x in xs if abs(x - float(args.threshold)) <= near_eps)
+            near2 = sum(1 for y in ys if abs(y - float(args.threshold)) <= near_eps)
 
             result.update(
                 {
@@ -84,6 +182,15 @@ def main() -> None:
                     "threshold": args.threshold,
                     "percent_agreement": round(po, 4),
                     "cohen_kappa": round(kappa, 4),
+                    "pearson_r_overall": round(_pearson(xs, ys), 4),
+                    "spearman_r_overall": round(_spearman(xs, ys), 4),
+                    "mean_abs_diff_overall": round(sum(abs_deltas) / n, 4),
+                    "mean_diff_overall": round(sum(deltas) / n, 4),
+                    "near_threshold_eps": round(near_eps, 4),
+                    "near_threshold_count": {
+                        r1: int(near1),
+                        r2: int(near2),
+                    },
                     "label_distribution": {
                         r1: {"accept": round(p1_pos, 4), "reject": round(p1_neg, 4)},
                         r2: {"accept": round(p2_pos, 4), "reject": round(p2_neg, 4)},
@@ -94,6 +201,11 @@ def main() -> None:
                     },
                 }
             )
+
+    # Multi-rater nominal alpha (binary), even if only 2 raters exist.
+    alpha, alpha_meta = _krippendorff_alpha_nominal_binary(by_item, threshold=float(args.threshold))
+    result["krippendorff_alpha_nominal_binary"] = round(float(alpha), 4)
+    result["krippendorff_alpha_meta"] = alpha_meta
 
     json_path = out_dir / "human_eval_report.json"
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -111,10 +223,17 @@ def main() -> None:
                 f"- n_paired_items: `{result['n_paired_items']}`",
                 f"- percent_agreement: `{result['percent_agreement']}`",
                 f"- cohen_kappa: `{result['cohen_kappa']}`",
+                f"- pearson_r_overall: `{result['pearson_r_overall']}`",
+                f"- spearman_r_overall: `{result['spearman_r_overall']}`",
+                f"- mean_abs_diff_overall: `{result['mean_abs_diff_overall']}`",
+                f"- near_threshold_eps: `{result['near_threshold_eps']}`",
+                f"- near_threshold_count: `{result['near_threshold_count']}`",
+                f"- krippendorff_alpha_nominal_binary: `{result['krippendorff_alpha_nominal_binary']}`",
             ]
         )
     else:
         md_lines.append(f"- reason: `{result.get('reason', 'insufficient ratings')}`")
+        md_lines.append(f"- krippendorff_alpha_nominal_binary: `{result['krippendorff_alpha_nominal_binary']}`")
 
     md_path = out_dir / "human_eval_report.md"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")

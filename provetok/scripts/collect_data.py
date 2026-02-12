@@ -1,40 +1,23 @@
-"""Script: collect micro-history data from Semantic Scholar + LLM extraction.
+"""S2-first data collection entrypoint (legacy wrapper).
 
-Usage:
-    # Collect Track A (vision)
-    python scripts/collect_data.py --track a --output data/raw/micro_history_a.jsonl
+This script replaces the historical milestone collector and now delegates to
+the unified dataset pipeline (`provetok dataset build` / `build_dataset`).
 
-    # Collect Track B (sequence modeling)
-    python scripts/collect_data.py --track b --output data/raw/micro_history_b.jsonl
-
-    # Collect both tracks
-    python scripts/collect_data.py --track both --output data/raw/
-
-    # Validate existing data
-    python scripts/collect_data.py --validate data/raw/micro_history_a.jsonl
-
-Environment variables:
-    LLM_API_KEY    - API key for DeepSeek/OpenAI (required for LLM extraction)
-    LLM_API_BASE   - API base URL (default: https://api.deepseek.com/v1)
-    S2_API_KEY     - Semantic Scholar API key (optional, higher rate limits)
+Examples:
+  python scripts/collect_data.py --track both --out runs/exports_real
+  python scripts/collect_data.py --track a --offline --out runs/exports_offline
 """
 
+from __future__ import annotations
+
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from provetok.data.collector import (
-    TRACK_A_MILESTONES,
-    TRACK_B_MILESTONES,
-    collect_track,
-    validate_records,
-)
-from provetok.data.schema import load_records
-from provetok.utils.llm_client import LLMClient, LLMConfig
+from provetok.dataset.build import build_dataset
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,71 +26,39 @@ logging.basicConfig(
 logger = logging.getLogger("collect_data")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Collect micro-history data")
-    parser.add_argument("--track", choices=["a", "b", "both"], default="a",
-                        help="Which track to collect")
-    parser.add_argument("--output", required=True,
-                        help="Output JSONL path (or directory if --track both)")
-    parser.add_argument("--model", default="deepseek-chat",
-                        help="LLM model for extraction")
-    parser.add_argument("--api_base", default=None,
-                        help="LLM API base URL")
-    parser.add_argument("--delay", type=float, default=1.5,
-                        help="Delay between Semantic Scholar API calls (seconds)")
-    parser.add_argument("--validate", default=None,
-                        help="Validate an existing JSONL file instead of collecting")
+def _normalize_track(track: str) -> str:
+    t = str(track).strip().lower()
+    if t in ("a", "track_a"):
+        return "A"
+    if t in ("b", "track_b"):
+        return "B"
+    return "both"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run S2-first dataset collection/build pipeline.")
+    parser.add_argument("--config", default="provetok/configs/dataset.yaml", help="Dataset YAML config path")
+    parser.add_argument("--track", choices=["a", "b", "both", "A", "B"], default="both", help="Track scope")
+    parser.add_argument("--out", "--output", dest="out", default=None, help="Export root directory")
+    parser.add_argument("--offline", action="store_true", help="Use cached snapshots only")
     args = parser.parse_args()
 
-    # Validate mode
-    if args.validate:
-        records = load_records(Path(args.validate))
-        issues = validate_records(records)
-        if issues:
-            print(f"\n{len(issues)} issues found:")
-            for issue in issues:
-                print(f"  - {issue}")
-        else:
-            print(f"\nAll {len(records)} records passed validation.")
-        return
+    track = _normalize_track(args.track)
+    out_root = Path(args.out) if args.out else None
 
-    # Collection mode
-    llm_config = LLMConfig(model=args.model)
-    if args.api_base:
-        llm_config.api_base = args.api_base
-    llm = LLMClient(llm_config)
+    logger.info("collect_data now delegates to dataset build (S2-first).")
+    logger.info("config=%s track=%s offline=%s out=%s", args.config, track, bool(args.offline), str(out_root or "default"))
 
-    import os
-    s2_key = os.environ.get("S2_API_KEY")
+    build_dataset(
+        config_path=Path(args.config) if args.config else None,
+        offline=bool(args.offline),
+        out_root=out_root,
+        track=track,
+    )
 
-    if args.track in ("a", "both"):
-        out_a = Path(args.output)
-        if args.track == "both":
-            out_a = Path(args.output) / "micro_history_a.jsonl"
-        logger.info("=== Collecting Track A: Vision Representation (%d papers) ===",
-                     len(TRACK_A_MILESTONES))
-        records_a = collect_track(
-            TRACK_A_MILESTONES, llm, out_a, s2_api_key=s2_key, delay=args.delay
-        )
-        issues_a = validate_records(records_a)
-        if issues_a:
-            logger.warning("Track A: %d validation issues", len(issues_a))
-
-    if args.track in ("b", "both"):
-        out_b = Path(args.output)
-        if args.track == "both":
-            out_b = Path(args.output) / "micro_history_b.jsonl"
-        logger.info("=== Collecting Track B: Sequence Modeling (%d papers) ===",
-                     len(TRACK_B_MILESTONES))
-        records_b = collect_track(
-            TRACK_B_MILESTONES, llm, out_b, s2_api_key=s2_key, delay=args.delay
-        )
-        issues_b = validate_records(records_b)
-        if issues_b:
-            logger.warning("Track B: %d validation issues", len(issues_b))
-
-    logger.info("Done. Remember to review and manually fix [TODO] entries.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
     main()
+

@@ -1,6 +1,6 @@
 """Experiment helper: offline online-pipeline run with manual decisions.
 
-This script creates a tiny OpenAlex snapshot and a manual_decisions file under a
+This script creates a tiny S2 snapshot and a manual_decisions file under a
 `runs/` directory, then runs the dataset build in offline mode. It is used by
 `docs/experiment.md` to prove selection-log auditability and paper_key plumbing.
 """
@@ -46,28 +46,28 @@ def main() -> None:
             manual_path,
             [
                 {
-                    "paper_key": "https://openalex.org/W1",
+                    "paper_key": "s2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "action": "exclude",
                     "reason_tag": "manual_exclude_exp",
                     "reviewer_id": "r1",
                     "evidence": "excluded by experiment",
                 },
                 {
-                    "paper_key": "https://openalex.org/W2",
+                    "paper_key": "s2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "action": "include",
                     "reason_tag": "manual_include_exp",
                     "reviewer_id": "r1",
                     "evidence": "included by experiment",
                 },
                 {
-                    "paper_key": "https://openalex.org/W3",
+                    "paper_key": "s2:cccccccccccccccccccccccccccccccccccccccc",
                     "action": "exclude",
                     "reason_tag": "manual_exclude_exp",
                     "reviewer_id": "r1",
                     "evidence": "excluded by experiment",
                 },
                 {
-                    "paper_key": "https://openalex.org/W4",
+                    "paper_key": "s2:dddddddddddddddddddddddddddddddddddddddd",
                     "action": "include",
                     "reason_tag": "manual_include_exp",
                     "reviewer_id": "r1",
@@ -88,20 +88,16 @@ def main() -> None:
                 '    name: "test"',
                 "    core_size: 1",
                 "    extended_size: 1",
-                "    openalex:",
-                "      concepts: []",
+                "    s2:",
                 "      keywords: []",
-                "      venues: []",
                 "      year_from: 2009",
                 "      year_to: 2025",
                 "  B:",
                 '    name: "test"',
                 "    core_size: 1",
                 "    extended_size: 1",
-                "    openalex:",
-                "      concepts: []",
+                "    s2:",
                 "      keywords: []",
-                "      venues: []",
                 "      year_from: 2009",
                 "      year_to: 2025",
                 "selection:",
@@ -128,31 +124,29 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    snapshot_dir = export_root / args.dataset_version / "private" / "raw_snapshots" / "openalex"
+    snapshot_dir = export_root / args.dataset_version / "private" / "raw_snapshots" / "s2"
     _write_jsonl(
         snapshot_dir / "works_track_A.jsonl",
         [
             {
-                "id": "https://openalex.org/W1",
+                "paperId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "title": "Paper One",
-                "publication_year": 2020,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C1"}],
-                "cited_by_count": 10,
-                "referenced_works": [],
-                "abstract_inverted_index": {"one": [0], "two": [1]},
+                "year": 2020,
+                "citationCount": 10,
+                "references": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "one two",
             },
             {
-                "id": "https://openalex.org/W2",
+                "paperId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "title": "Paper Two",
-                "publication_year": 2021,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C1"}],
-                "cited_by_count": 20,
-                "referenced_works": ["https://openalex.org/W1"],
-                "abstract_inverted_index": {"alpha": [0], "beta": [1]},
+                "year": 2021,
+                "citationCount": 20,
+                "references": [{"paperId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "alpha beta",
             },
         ],
     )
@@ -160,26 +154,24 @@ def main() -> None:
         snapshot_dir / "works_track_B.jsonl",
         [
             {
-                "id": "https://openalex.org/W3",
+                "paperId": "cccccccccccccccccccccccccccccccccccccccc",
                 "title": "Paper Three",
-                "publication_year": 2019,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C2"}],
-                "cited_by_count": 7,
-                "referenced_works": [],
-                "abstract_inverted_index": {"three": [0], "paper": [1]},
+                "year": 2019,
+                "citationCount": 7,
+                "references": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "three paper",
             },
             {
-                "id": "https://openalex.org/W4",
+                "paperId": "dddddddddddddddddddddddddddddddddddddddd",
                 "title": "Paper Four",
-                "publication_year": 2022,
-                "doi": None,
-                "ids": {"arxiv_id": None},
-                "concepts": [{"id": "C2"}],
-                "cited_by_count": 9,
-                "referenced_works": ["https://openalex.org/W3"],
-                "abstract_inverted_index": {"four": [0], "paper": [1]},
+                "year": 2022,
+                "citationCount": 9,
+                "references": [{"paperId": "cccccccccccccccccccccccccccccccccccccccc"}],
+                "fieldsOfStudy": ["Computer Science"],
+                "externalIds": {},
+                "abstract": "four paper",
             },
         ],
     )

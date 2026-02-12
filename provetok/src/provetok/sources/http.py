@@ -111,6 +111,35 @@ def http_get(
         )
 
 
+def http_post_json(
+    url: str,
+    *,
+    json_body: Dict[str, Any],
+    headers: Optional[Dict[str, str]] = None,
+    timeout: int = 60,
+    limiter: Optional[RateLimiter] = None,
+    retries: int = 1,  # kept for backwards compatibility; no in-code recovery in this repo
+) -> HttpResponse:
+    all_headers = {"Content-Type": "application/json"}
+    if headers:
+        all_headers.update(headers)
+
+    body = json.dumps(json_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=all_headers, method="POST")
+
+    if limiter is not None:
+        limiter.wait()
+
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        resp_body = resp.read()
+        return HttpResponse(
+            url=url,
+            status=int(getattr(resp, "status", 200)),
+            headers={k.lower(): v for k, v in resp.headers.items()},
+            body=resp_body,
+        )
+
+
 def safe_headers(headers: Dict[str, str]) -> Dict[str, str]:
     """Return headers with secrets removed."""
     redacted = {}
@@ -121,4 +150,3 @@ def safe_headers(headers: Dict[str, str]) -> Dict[str, str]:
         else:
             redacted[k] = v
     return redacted
-

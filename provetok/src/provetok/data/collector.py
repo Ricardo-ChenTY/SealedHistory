@@ -20,11 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import urllib.request
-import urllib.error
-import urllib.parse
-
 from provetok.data.schema import PaperRecord, ExperimentResult, save_records
+from provetok.sources.s2_client import S2Client, S2Config
 from provetok.utils.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -45,10 +42,10 @@ def _parse_float(value: Any, *, default: float = 0.0) -> float:
     return default
 
 # ======================================================================
-# Semantic Scholar API client (no auth required for basic fields)
+# Semantic Scholar API client
 # ======================================================================
 
-S2_API_BASE = "https://api.semanticscholar.org/graph/v1"
+S2_API_BASE = "https://ai4scholar.net/graph/v1"
 S2_FIELDS = "paperId,title,abstract,year,venue,authors,citationCount,references,fieldsOfStudy"
 
 
@@ -69,36 +66,19 @@ class S2Paper:
 
 def fetch_paper_by_id(s2_id: str, api_key: Optional[str] = None) -> Optional[S2Paper]:
     """Fetch a single paper by Semantic Scholar ID or DOI."""
-    url = f"{S2_API_BASE}/paper/{s2_id}?fields={S2_FIELDS}"
-    return _fetch(url, api_key)
-
-
-def search_paper_by_title(title: str, api_key: Optional[str] = None) -> Optional[S2Paper]:
-    """Search for a paper by title, return best match."""
-    query = urllib.parse.quote(title)
-    url = f"{S2_API_BASE}/paper/search?query={query}&limit=1&fields={S2_FIELDS}"
-    data = _http_get(url, api_key)
-    if data and data.get("data"):
-        return _parse_s2_paper(data["data"][0])
-    return None
-
-
-def _fetch(url: str, api_key: Optional[str] = None) -> Optional[S2Paper]:
-    data = _http_get(url, api_key)
+    client = S2Client(S2Config(base_url=S2_API_BASE, api_key=str(api_key or ""), rate_limit_qps=1.0))
+    data = client.get_paper(s2_id, fields=S2_FIELDS)
     if data:
         return _parse_s2_paper(data)
     return None
 
 
-def _http_get(url: str, api_key: Optional[str] = None) -> Optional[dict]:
-    """Simple HTTP GET."""
-    headers = {"User-Agent": "ProveTok/0.1"}
-    if api_key:
-        headers["x-api-key"] = api_key
-
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def search_paper_by_title(title: str, api_key: Optional[str] = None) -> Optional[S2Paper]:
+    """Search for a paper by title, return best match."""
+    client = S2Client(S2Config(base_url=S2_API_BASE, api_key=str(api_key or ""), rate_limit_qps=1.0))
+    data = client.search(title, limit=1, fields=S2_FIELDS)
+    if data and data.get("data"):
+        return _parse_s2_paper(data["data"][0])
     return None
 
 
